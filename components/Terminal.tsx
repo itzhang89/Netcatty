@@ -1434,6 +1434,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
     const handleContextMenuCapture = (e: MouseEvent) => {
       if (!mouseTrackingRef.current) return;
+      if (statusRef.current !== 'connected') return;
       e.preventDefault();
       e.stopImmediatePropagation();
 
@@ -1457,7 +1458,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     };
 
     const handleMouseUpCapture = (e: MouseEvent) => {
-      if (e.button === 2 && mouseTrackingRef.current) {
+      if (e.button === 2 && mouseTrackingRef.current && statusRef.current === 'connected') {
         e.stopImmediatePropagation();
       }
     };
@@ -1858,6 +1859,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       onSelectWord={terminalContextActions.onSelectWord}
       onSplitHorizontal={onSplitHorizontal}
       onSplitVertical={onSplitVertical}
+      isReconnectable={status === "disconnected"}
+      onReconnect={handleRetry}
       onClose={inWorkspace ? () => onCloseSession?.(sessionId) : undefined}
     >
       <div
