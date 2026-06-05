@@ -6,6 +6,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { I18nProvider } from "../application/i18n/I18nProvider.tsx";
 import type { Host } from "../types.ts";
 import HostDetailsPanel, { parseOptionalPortInput } from "./HostDetailsPanel.tsx";
+import {
+  resolvePrimaryProtocolSavePort,
+  resolvePrimaryProtocolSwitchPort,
+} from "./HostDetailsPanel.helpers.ts";
 import { TooltipProvider } from "./ui/tooltip.tsx";
 
 const hostWithMissingProxyProfile: Host = {
@@ -239,6 +243,26 @@ test("HostDetailsPanel displays inherited telnet credentials", () => {
 test("parseOptionalPortInput clears empty port values", () => {
   assert.equal(parseOptionalPortInput(""), undefined);
   assert.equal(parseOptionalPortInput("2325"), 2325);
+});
+
+test("resolvePrimaryProtocolSwitchPort only migrates opposite protocol defaults", () => {
+  assert.equal(resolvePrimaryProtocolSwitchPort(22, "telnet", false, false), 23);
+  assert.equal(resolvePrimaryProtocolSwitchPort(23, "ssh", false, false), 22);
+  assert.equal(resolvePrimaryProtocolSwitchPort(2222, "telnet", false, false), 2222);
+  assert.equal(resolvePrimaryProtocolSwitchPort(2323, "ssh", false, false), 2323);
+  assert.equal(resolvePrimaryProtocolSwitchPort(undefined, "telnet", false, false), 23);
+  assert.equal(resolvePrimaryProtocolSwitchPort(undefined, "ssh", false, false), 22);
+  assert.equal(resolvePrimaryProtocolSwitchPort(22, "telnet", false, true), 22);
+  assert.equal(resolvePrimaryProtocolSwitchPort(22, "telnet", true, false), 22);
+});
+
+test("resolvePrimaryProtocolSavePort falls back to telnet default for primary telnet", () => {
+  assert.equal(resolvePrimaryProtocolSavePort("telnet", undefined, false, false), 23);
+  assert.equal(resolvePrimaryProtocolSavePort("telnet", 2323, false, false), 2323);
+  assert.equal(resolvePrimaryProtocolSavePort("ssh", undefined, false, false), 22);
+  assert.equal(resolvePrimaryProtocolSavePort("ssh", undefined, true, false), undefined);
+  assert.equal(resolvePrimaryProtocolSavePort("telnet", undefined, false, true), undefined);
+  assert.equal(resolvePrimaryProtocolSavePort("telnet", undefined, true, false), undefined);
 });
 
 test("HostDetailsPanel does not offer to disable telnet when telnet is the primary protocol", () => {
