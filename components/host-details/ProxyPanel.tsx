@@ -2,11 +2,10 @@
  * Proxy Configuration Sub-Panel
  * Panel for configuring HTTP/SOCKS5/ProxyCommand proxy settings
  */
-import { Check, Globe, KeyRound, SquareTerminal, Trash2 } from 'lucide-react';
+import { Globe, KeyRound, SquareTerminal, Trash2 } from 'lucide-react';
 import React, { useCallback, useMemo } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { formatProxyConfigEndpoint, formatProxyConfigType, isProxyCommandConfig, isValidProxyPort } from '../../domain/proxyProfiles';
-import { cn } from '../../lib/utils';
 import { ProxyConfig, ProxyProfile } from '../../types';
 import { AsidePanel, AsidePanelContent, type AsidePanelLayout } from '../ui/aside-panel';
 import { Badge } from '../ui/badge';
@@ -121,40 +120,24 @@ export const ProxyPanel: React.FC<ProxyPanelProps> = ({
                 {!isUsingProfile && (
                     <>
                         <Card className="p-3 space-y-3 bg-card border-border/80">
-                            <div className="flex items-center justify-between gap-3">
+                            <div className="space-y-2">
                                 <div className="flex items-center gap-2">
                                     <Globe size={14} className="text-muted-foreground" />
                                     <p className="text-xs font-semibold">{t('field.type')}</p>
                                 </div>
-                                <div className="flex gap-2">
-                                    <Button
-                                        variant={proxyConfig?.type === 'http' ? "secondary" : "ghost"}
-                                        size="sm"
-                                        className={cn("h-8", proxyConfig?.type === 'http' && "bg-primary/15")}
-                                        onClick={() => onUpdateProxy('type', 'http')}
-                                    >
-                                        <Check size={14} className={cn("mr-1", proxyConfig?.type !== 'http' && "opacity-0")} />
-                                        HTTP
-                                    </Button>
-                                    <Button
-                                        variant={proxyConfig?.type === 'socks5' ? "secondary" : "ghost"}
-                                        size="sm"
-                                        className={cn("h-8", proxyConfig?.type === 'socks5' && "bg-primary/15")}
-                                        onClick={() => onUpdateProxy('type', 'socks5')}
-                                    >
-                                        <Check size={14} className={cn("mr-1", proxyConfig?.type !== 'socks5' && "opacity-0")} />
-                                        SOCKS5
-                                    </Button>
-                                    <Button
-                                        variant={proxyConfig?.type === 'command' ? "secondary" : "ghost"}
-                                        size="sm"
-                                        className={cn("h-8", proxyConfig?.type === 'command' && "bg-primary/15")}
-                                        onClick={() => onUpdateProxy('type', 'command')}
-                                    >
-                                        <Check size={14} className={cn("mr-1", proxyConfig?.type !== 'command' && "opacity-0")} />
-                                        {t('hostDetails.proxyPanel.command')}
-                                    </Button>
-                                </div>
+                                <Select
+                                    value={proxyConfig?.type || 'http'}
+                                    onValueChange={(value) => onUpdateProxy('type', value as ProxyConfig['type'])}
+                                >
+                                    <SelectTrigger aria-label={t('field.type')} className="h-10">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="http">HTTP</SelectItem>
+                                        <SelectItem value="socks5">SOCKS5</SelectItem>
+                                        <SelectItem value="command">{t('hostDetails.proxyPanel.command')}</SelectItem>
+                                    </SelectContent>
+                                </Select>
                             </div>
 
                             {isCommandProxy ? (

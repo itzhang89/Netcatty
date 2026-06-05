@@ -118,3 +118,12 @@ test("ProxyPanel supports custom ProxyCommand settings", () => {
   assert.doesNotMatch(markup, /Proxy host/);
   assert.doesNotMatch(markup, /Credentials/);
 });
+
+test("ProxyPanel uses a dropdown for proxy type selection", () => {
+  const markup = renderPanel({
+    proxyConfig: { type: "http", host: "manual-proxy.example.com", port: 3128 },
+  });
+
+  assert.match(markup, /role="combobox"/);
+  assert.match(markup, /aria-label="Type"/);
+});

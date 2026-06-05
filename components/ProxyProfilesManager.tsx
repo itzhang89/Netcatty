@@ -1,6 +1,5 @@
 import {
   AlertTriangle,
-  Check,
   ChevronDown,
   Copy,
   Globe,
@@ -53,6 +52,7 @@ import {
 } from "./ui/dialog";
 import { Dropdown, DropdownContent, DropdownTrigger } from "./ui/dropdown";
 import { Input } from "./ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { toast } from "./ui/toast";
 import {
   VaultHeaderSearch,
@@ -470,40 +470,24 @@ export const ProxyProfilesManager: React.FC<ProxyProfilesManagerProps> = ({
             </Card>
 
             <Card className="p-3 space-y-3 bg-card border-border/80">
-              <div className="flex items-center justify-between gap-3">
+              <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <Globe size={14} className="text-muted-foreground" />
                   <p className="text-xs font-semibold">{t("field.type")}</p>
                 </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant={draft.config.type === "http" ? "secondary" : "ghost"}
-                    size="sm"
-                    className={cn("h-8", draft.config.type === "http" && "bg-primary/15")}
-                    onClick={() => updateDraftConfig("type", "http")}
-                  >
-                    <Check size={14} className={cn("mr-1", draft.config.type !== "http" && "opacity-0")} />
-                    HTTP
-                  </Button>
-                  <Button
-                    variant={draft.config.type === "socks5" ? "secondary" : "ghost"}
-                    size="sm"
-                    className={cn("h-8", draft.config.type === "socks5" && "bg-primary/15")}
-                    onClick={() => updateDraftConfig("type", "socks5")}
-                  >
-                    <Check size={14} className={cn("mr-1", draft.config.type !== "socks5" && "opacity-0")} />
-                    SOCKS5
-                  </Button>
-                  <Button
-                    variant={draft.config.type === "command" ? "secondary" : "ghost"}
-                    size="sm"
-                    className={cn("h-8", draft.config.type === "command" && "bg-primary/15")}
-                    onClick={() => updateDraftConfig("type", "command")}
-                  >
-                    <Check size={14} className={cn("mr-1", draft.config.type !== "command" && "opacity-0")} />
-                    {t("hostDetails.proxyPanel.command")}
-                  </Button>
-                </div>
+                <Select
+                  value={draft.config.type}
+                  onValueChange={(value) => updateDraftConfig("type", value as ProxyConfig["type"])}
+                >
+                  <SelectTrigger aria-label={t("field.type")} className="h-10">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="http">HTTP</SelectItem>
+                    <SelectItem value="socks5">SOCKS5</SelectItem>
+                    <SelectItem value="command">{t("hostDetails.proxyPanel.command")}</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               {isProxyCommandConfig(draft.config) ? (
