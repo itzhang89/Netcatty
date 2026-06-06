@@ -108,6 +108,10 @@ const getTerminalOutputTimestampPrefixer = (term: XTerm): TerminalOutputTimestam
   return prefixer;
 };
 
+export const resetTerminalOutputTimestamps = (term: XTerm) => {
+  getTerminalOutputTimestampPrefixer(term).reset();
+};
+
 const applyTerminalOutputTimestamps = (
   term: XTerm,
   data: string,
@@ -118,6 +122,7 @@ const applyTerminalOutputTimestamps = (
     prefixer.reset();
     return data;
   }
+  prefixer.setAlternateScreenActive((term.buffer.active as { type?: string }).type === "alternate");
   return prefixer.append(data);
 };
 
@@ -165,8 +170,7 @@ export const writeSessionData = (
   flow.received(data.length);
   enqueueTerminalWrite(term, (done) => {
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
-    const timestampsEnabled = settings?.showLineTimestamps === true &&
-      (term.buffer.active as { type?: string }).type !== "alternate";
+    const timestampsEnabled = settings?.showLineTimestamps === true;
     const forcePromptNewLine = settings?.forcePromptNewLine ?? false;
     if (!forcePromptNewLine && ctx.promptLineBreakStateRef?.current) {
       ctx.promptLineBreakStateRef.current.pendingCommand = false;
@@ -222,6 +226,7 @@ export const attachSessionToTerminal = (
   ctx.sessionRef.current = id;
   // Clear any stale back-pressure accounting from a prior session on this term.
   getFlowController(ctx, term).reset();
+  resetTerminalOutputTimestamps(term);
   ctx.onSessionAttached?.(id);
 
   ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(id, (chunk) => {

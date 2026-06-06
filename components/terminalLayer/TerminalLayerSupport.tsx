@@ -450,7 +450,7 @@ interface TerminalPaneProps {
   keyBindings?: KeyBinding[];
   isResizing: boolean;
   isComposeBarOpen: boolean;
-  sessionLog?: { enabled: true; directory: string; format: string };
+  sessionLog?: { enabled: true; directory: string; format: string; timestampsEnabled?: boolean };
   sshDebugLogEnabled?: boolean;
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
   onTerminalFontSizeChange?: (sessionId: string, fontSize: number) => void;
@@ -750,7 +750,7 @@ interface TerminalPanesHostProps {
   keyBindings?: KeyBinding[];
   isResizing: boolean;
   isComposeBarOpen: boolean;
-  sessionLog?: { enabled: true; directory: string; format: string };
+  sessionLog?: { enabled: true; directory: string; format: string; timestampsEnabled?: boolean };
   sshDebugLogEnabled?: boolean;
   onHotkeyAction?: (action: string, event: KeyboardEvent) => void;
   onTerminalFontSizeChange?: TerminalPaneProps['onTerminalFontSizeChange'];

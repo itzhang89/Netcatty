@@ -276,6 +276,93 @@ test("local session captures paste cleanup writes in terminal log data", async (
   assert.deepEqual(capturedLogData, ["line 3 with enough content", "\x1b[K"]);
 });
 
+test("local session resets terminal timestamp state when reusing a terminal", async () => {
+  const writes: string[] = [];
+  let onData: ((data: string) => void) | null = null;
+
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: (_id: string, cb: (data: string) => void) => {
+      onData = cb;
+      return noop;
+    },
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+
+  const ctx = {
+    host: {
+      id: "local-host",
+      label: "Local",
+      hostname: "local",
+      username: "",
+      protocol: "local",
+    },
+    keys: [],
+    resolvedChainHosts: [],
+    sessionId: "session-1",
+    terminalSettings: {
+      showLineTimestamps: true,
+      scrollOnOutput: false,
+      forcePromptNewLine: false,
+    },
+    terminalBackend,
+    sessionRef: { current: null },
+    hasConnectedRef: { current: true },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null },
+    disposeExitRef: { current: null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    updateStatus: noop,
+    setStatus: noop,
+    setError: noop,
+    setNeedsAuth: noop,
+    setAuthRetryMessage: noop,
+    setAuthPassword: noop,
+    setProgressLogs: noop,
+    setProgressValue: noop,
+    setChainProgress: noop,
+  };
+
+  const term = {
+    cols: 20,
+    rows: 4,
+    buffer: { active: { type: "normal" } },
+    write: (data: string, callback?: () => void) => {
+      writes.push(data);
+      callback?.();
+    },
+    writeln: noop,
+    scrollToBottom: noop,
+  };
+
+  const starters = createTerminalSessionStarters(ctx as never);
+  await starters.startLocal(term as never);
+  onData?.("unfinished");
+  await starters.startLocal(term as never);
+  onData?.("fresh");
+
+  assert.equal(writes.length, 2);
+  assert.equal((writes[0].match(/\[\d{2}:\d{2}:\d{2}\]/g) ?? []).length, 1);
+  assert.equal((writes[1].match(/\[\d{2}:\d{2}:\d{2}\]/g) ?? []).length, 1);
+  assert.ok(writes[1].endsWith("] \x1b[22;39mfresh"));
+});
+
 test("session data waits for prior terminal writes before evaluating prompt line breaks", async () => {
   const writes: string[] = [];
   const writeCallbacks: Array<() => void> = [];

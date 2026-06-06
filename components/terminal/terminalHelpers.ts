@@ -128,7 +128,7 @@ export interface TerminalProps {
     sessionId: string,
     executor: ((command: string, noAutoRun?: boolean) => void) | null,
   ) => void;
-  sessionLog?: { enabled: boolean; directory: string; format: string };
+  sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
   sshDebugLogEnabled?: boolean;
 }
 

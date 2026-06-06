@@ -4,7 +4,14 @@ import type { Host, SSHKey } from "../../../types";
 import type { TerminalSessionStartersContext } from "./createTerminalSessionStarters.types";
 export type { PendingAuth, SessionLogConfig, TerminalSessionStartersContext } from "./createTerminalSessionStarters.types";
 export { normalizeStartupCommandDelay, splitStartupCommandLines } from "./terminalStartupCommands";
-import { attachSessionToTerminal, buildTermEnv, getFlowController, writeSessionData, writeTerminalLine } from "./terminalSessionAttachment";
+import {
+  attachSessionToTerminal,
+  buildTermEnv,
+  getFlowController,
+  resetTerminalOutputTimestamps,
+  writeSessionData,
+  writeTerminalLine,
+} from "./terminalSessionAttachment";
 import { isConnectionTokenCurrent, registerConnectionToken, runDistroDetection } from "./terminalDistroDetection";
 import { scheduleStartupCommand } from "./terminalStartupCommands";
 import {
@@ -1029,6 +1036,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
       ctx.sessionRef.current = id;
       getFlowController(ctx, term).reset();
+      resetTerminalOutputTimestamps(term);
       ctx.disposeDataRef.current = ctx.terminalBackend.onSessionData(id, (chunk) => {
         writeSessionData(ctx, term, chunk);
         if (!ctx.hasConnectedRef.current) {

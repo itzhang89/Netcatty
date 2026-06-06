@@ -190,7 +190,7 @@ const SYNCABLE_TERMINAL_KEYS = [
   'rightClickBehavior', 'copyOnSelect', 'middleClickPaste', 'wordSeparators',
   'linkModifier', 'keywordHighlightEnabled', 'keywordHighlightRules',
   'keepaliveInterval', 'keepaliveCountMax', 'disableBracketedPaste', 'clearWipesScrollback',
-  'preserveSelectionOnInput', 'forcePromptNewLine', 'osc52Clipboard', 'showServerStats',
+  'preserveSelectionOnInput', 'forcePromptNewLine', 'osc52Clipboard', 'showServerStats', 'showLineTimestamps',
   'serverStatsRefreshInterval', 'rendererType',
   'autocompleteEnabled', 'autocompleteGhostText', 'autocompletePopupMenu',
   'autocompleteDebounceMs', 'autocompleteMinChars', 'autocompleteMaxSuggestions',
