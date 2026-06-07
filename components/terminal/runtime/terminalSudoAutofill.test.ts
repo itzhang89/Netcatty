@@ -108,10 +108,20 @@ test("does not arm when the hint cannot be shown (overlay unavailable)", () => {
   assert.deepEqual(writes, []);
 });
 
-test("no hint until a sudo command is submitted", () => {
+test("a bare Password prompt does not hint until a sudo command is submitted", () => {
+  const { autofill, hints } = make();
+  autofill.handleOutput("Password: ");
+  assert.deepEqual(hints, []);
+});
+
+test("an explicit [sudo] prompt hints without a recorded sudo command", () => {
+  // The [sudo] tag is sudo-specific, so we hint even when arming didn't fire —
+  // manual typing's recordedCommand is flaky (#1281/#1284), and the hint only
+  // pastes on explicit Enter, so showing it is safe.
   const { autofill, hints } = make();
   autofill.handleOutput("[sudo] password for alice: ");
-  assert.deepEqual(hints, []);
+  assert.deepEqual(hints, [true]);
+  assert.equal(autofill.isPromptPending(), true);
 });
 
 test("no hint without a saved password", () => {
@@ -172,7 +182,7 @@ test("keeps the hint pending when sudo re-prompts after a wrong password", () =>
   assert.deepEqual(hints, [true]);
 });
 
-test("an expired arm shows no hint", () => {
+test("an expired arm shows no hint for a bare prompt", () => {
   const writes: string[] = [];
   const hints: boolean[] = [];
   let now = 1_000;
@@ -184,7 +194,7 @@ test("an expired arm shows no hint", () => {
   });
   autofill.armForCommand("sudo whoami");
   now += 31_000;
-  autofill.handleOutput("[sudo] password for alice: ");
+  autofill.handleOutput("Password: ");
   assert.deepEqual(hints, []);
 });
 

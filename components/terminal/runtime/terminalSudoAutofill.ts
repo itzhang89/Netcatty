@@ -16,6 +16,12 @@ const CONCEAL_PATTERN = new RegExp(`${ESCAPE_SEQUENCE}\\[(?:[0-9]+;)*8(?:;[0-9]+
 // only shows a dismissable hint and never leaks a password to a child program.
 const SUDO_PROMPT_PATTERN =
   /(?:^|[\r\n])[^\r\n]*?(?:\bpassword\b|密\s*码|口\s*令)[^\r\n:：]*[:：]\s*$/i;
+// An explicit sudo prompt carries the sudo-specific "[sudo]" tag. No other tool
+// prompts this way, so we hint on it WITHOUT requiring an arm — keeping the hint
+// reliable even when command recording (arming) didn't fire for a manually
+// typed command (#1284; manual typing's recordedCommand is flaky).
+const EXPLICIT_SUDO_PROMPT_PATTERN =
+  /(?:^|[\r\n])[^\r\n]*?\[sudo\][^\r\n]*?(?:\bpassword\b|密\s*码|口\s*令)[^\r\n:：]*[:：]\s*$/i;
 const SUDO_COMMAND_PATTERN = /^\s*(?:builtin\s+|command\s+)?sudo(?:\s|$)/;
 
 export const stripTerminalControlSequences = (data: string): string =>
@@ -24,6 +30,11 @@ export const stripTerminalControlSequences = (data: string): string =>
 export const isSudoPasswordPrompt = (data: string): boolean => {
   if (CONCEAL_PATTERN.test(data)) return false;
   return SUDO_PROMPT_PATTERN.test(stripTerminalControlSequences(data));
+};
+
+export const isExplicitSudoPrompt = (data: string): boolean => {
+  if (CONCEAL_PATTERN.test(data)) return false;
+  return EXPLICIT_SUDO_PROMPT_PATTERN.test(stripTerminalControlSequences(data));
 };
 
 export const shouldArmSudoPasswordAutofill = (command: string): boolean =>
@@ -129,14 +140,21 @@ export const createSudoPasswordAutofill = (_options: {
       tail = "";
     },
     handleOutput: (data: string) => {
-      if (!password || armedUntil === Number.NEGATIVE_INFINITY) return data;
-      if (options.now() > armedUntil) {
-        disarm();
-        return data;
-      }
+      if (!password) return data;
       tail = `${tail}${data}`.slice(-1024);
+      // Fast path for bulk output: a prompt line ends in a colon, so a chunk
+      // with no colon can't be completing one. Skip the regex work unless a hint
+      // is pending (then we must keep watching for the prompt moving on).
+      if (!pending && !data.includes(":") && !data.includes("：")) return data;
       const lastLine = tail.split(/[\r\n]/).pop() ?? tail;
-      const isPrompt = isSudoPasswordPrompt(lastLine);
+      const armActive =
+        armedUntil !== Number.NEGATIVE_INFINITY && options.now() <= armedUntil;
+      // Explicit "[sudo] …" prompts are sudo-specific → hint regardless of arm,
+      // so it's reliable even when arming didn't fire (#1284). Bare "Password:"
+      // only hints inside the arm window, to avoid noise on unrelated prompts
+      // (ssh, mysql, …).
+      const isPrompt =
+        isExplicitSudoPrompt(lastLine) || (armActive && isSudoPasswordPrompt(lastLine));
       if (pending) {
         // The prompt moved on: a new line arrived and the latest line is no
         // longer a password prompt (sudo timed out / failed / returned to the
@@ -146,13 +164,11 @@ export const createSudoPasswordAutofill = (_options: {
         return data;
       }
       if (isPrompt) {
-        // Only arm a pending confirmation if the hint actually rendered. If the
-        // overlay is unavailable (e.g. autocomplete disabled), don't intercept
-        // Enter — the user would have no visible cue and could leak the password.
+        // Only mark pending if the hint actually rendered. If the overlay is
+        // unavailable (e.g. autocomplete disabled), don't intercept Enter — the
+        // user would have no visible cue and could leak the password.
         if (options.onHint(true)) {
           pending = true;
-        } else {
-          disarm();
         }
       }
       return data;
