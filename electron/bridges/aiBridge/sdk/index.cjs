@@ -86,6 +86,9 @@ const DRIVER_REGISTRY = {
         env: ctx.env,
         injectedMcpServers: ctx.injectedMcpServers,
         abortController: ctx.abortController,
+        resume: ctx.resumeSessionId,
+        pathToCodebuddyCode: ctx.binPath,
+        toolIntegrationMode: ctx.toolIntegrationMode,
       });
       return codebuddy.runCodebuddyTurn({
         prompt: ctx.prompt,
@@ -94,8 +97,9 @@ const DRIVER_REGISTRY = {
         emitter: ctx.emitter,
       });
     },
-    // CodeBuddy SDK has no model catalog API; the UI falls back to curated presets.
-    async listModels() { return []; },
+    async listModels(ctx) {
+      return codebuddy.listCodebuddyModels({ pathToCodebuddyCode: ctx.binPath, env: ctx.env });
+    },
   },
 };
 

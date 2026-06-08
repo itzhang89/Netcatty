@@ -4,6 +4,9 @@
  * ExternalAgentConfig.env; this splits that into the editable pieces and
  * recombines them.
  *
+ * CODEBUDDY_CODE_PATH is owned by path discovery, so it is preserved across
+ * edits but never shown in the env editor.
+ *
  * The SDK supports CODEBUDDY_API_KEY (via options.env), but the CLI itself
  * does not. CODEBUDDY_INTERNET_ENVIRONMENT is managed as a first-class field.
  * Users who need CODEBUDDY_API_KEY or CODEBUDDY_AUTH_TOKEN should set them
@@ -11,7 +14,8 @@
  */
 
 const INTERNET_ENV_VAR = "CODEBUDDY_INTERNET_ENVIRONMENT";
-const MANAGED_KEYS = new Set([INTERNET_ENV_VAR]);
+const CODE_PATH_KEY = "CODEBUDDY_CODE_PATH";
+const MANAGED_KEYS = new Set([INTERNET_ENV_VAR, CODE_PATH_KEY]);
 
 export function parseEnvLines(text: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -55,6 +59,10 @@ export function buildCodebuddyEnv(
 
   const trimmedInternetEnv = String(internetEnv || "").trim();
   if (trimmedInternetEnv) next[INTERNET_ENV_VAR] = trimmedInternetEnv;
+
+  // Preserve auto-injected CODEBUDDY_CODE_PATH across edits.
+  const codePath = prevEnv?.[CODE_PATH_KEY];
+  if (codePath) next[CODE_PATH_KEY] = codePath;
 
   // Drop managed keys if a user typed them into the free-text editor
   const parsed = parseEnvLines(envText);

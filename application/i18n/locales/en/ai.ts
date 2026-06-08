@@ -108,7 +108,7 @@ export const enAiMessages: Messages = {
 
   // AI CodeBuddy Code
   'ai.codebuddy.title': 'CodeBuddy Code',
-  'ai.codebuddy.description': 'Uses CodeBuddy Code via the official Agent SDK (`@tencent-ai/agent-sdk`, Preview). Once detected, it can be selected as an external coding agent.',
+  'ai.codebuddy.description': 'Uses CodeBuddy Code via the official Agent SDK (`@tencent-ai/agent-sdk`). Once detected, it can be selected as an external coding agent.',
   'ai.codebuddy.detecting': 'Detecting...',
   'ai.codebuddy.detected': 'Detected',
   'ai.codebuddy.notFound': 'Not found',

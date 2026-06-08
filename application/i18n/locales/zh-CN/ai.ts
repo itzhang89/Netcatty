@@ -108,7 +108,7 @@ export const zhCNAiMessages: Messages = {
 
   // AI CodeBuddy Code
   'ai.codebuddy.title': 'CodeBuddy Code',
-  'ai.codebuddy.description': '通过官方 Agent SDK（`@tencent-ai/agent-sdk`，Preview 阶段）接入 CodeBuddy Code。检测到后即可作为外部编程 Agent 使用。',
+  'ai.codebuddy.description': '通过官方 Agent SDK（`@tencent-ai/agent-sdk`）接入 CodeBuddy Code。检测到后即可作为外部编程 Agent 使用。',
   'ai.codebuddy.detecting': '检测中...',
   'ai.codebuddy.detected': '已检测到',
   'ai.codebuddy.notFound': '未找到',

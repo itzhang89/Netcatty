@@ -132,7 +132,7 @@ export const AGENT_DEFAULTS: Record<string, Omit<ExternalAgentConfig, "id" | "co
   },
   codebuddy: {
     name: "CodeBuddy Code",
-    args: ["--acp"],
+    args: [],
     icon: "codebuddy",
     sdkBackend: "codebuddy",
   },

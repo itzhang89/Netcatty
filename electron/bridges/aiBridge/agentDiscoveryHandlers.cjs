@@ -12,7 +12,7 @@ function registerAgentDiscoveryHandlers(ctx) {
       { command: "copilot", name: "GitHub Copilot CLI", icon: "copilot",
         description: "GitHub's coding agent CLI", sdkBackend: "copilot", args: [] },
       { command: "codebuddy", name: "CodeBuddy Code", icon: "codebuddy",
-        description: "Tencent's coding agent CLI (SDK Preview)", sdkBackend: "codebuddy", args: [] },
+        description: "Tencent's coding agent CLI (Agent SDK)", sdkBackend: "codebuddy", args: [] },
     ];
 
     const shellEnv = await getShellEnv();

@@ -231,7 +231,7 @@ export interface ExternalAgentConfig {
   env?: Record<string, string>;
   icon?: string;
   enabled: boolean;
-  /** SDK backend key for managed agents (claude|codex|copilot). */
+  /** SDK backend key for managed agents (claude|codex|copilot|codebuddy). */
   sdkBackend?: string;
   /** @deprecated Legacy persisted field from the pre-SDK migration. Read only for compatibility. */
   acpCommand?: string;
@@ -254,8 +254,8 @@ export interface DiscoveredAgent {
   /** @deprecated Legacy discovery field from the pre-SDK migration. */
   acpCommand?: string;
   acpArgs?: string[];
-  /** SDK backend key (claude|codex|copilot) — the post-migration routing value. */
-  sdkBackend?: 'claude' | 'codex' | 'copilot';
+  /** SDK backend key (claude|codex|copilot|codebuddy) — the routing value. */
+  sdkBackend?: 'claude' | 'codex' | 'copilot' | 'codebuddy';
   /** Absolute resolved CLI path (preferred over `path`). */
   binPath?: string;
   installed?: boolean;

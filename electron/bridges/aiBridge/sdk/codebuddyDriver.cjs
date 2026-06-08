@@ -4,15 +4,74 @@
  * CodeBuddy backend driver — wraps @tencent-ai/agent-sdk query().
  *
  * - Spawns the user's system `codebuddy` binary (auto-discovered or via
- *   CODEBUDDY_CODE_PATH env var).
+ *   CODEBUDDY_CODE_PATH env var / pathToCodebuddyCode option).
  * - Bypasses the SDK's built-in permission system and routes all side effects
  *   through the injected netcatty MCP server (approval/scope/blocklist enforced
  *   there).
  * - Translates SDK messages into the canonical renderer event protocol.
- *
- * CodeBuddy SDK is in Preview — interfaces may change between releases.
+ * - Supports streaming text via includePartialMessages, multi-turn session
+ *   resume, thinking mode config, and model listing.
  */
 const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
+
+// Built-in tools that need interactive UI netcatty doesn't provide — they would
+// hang the turn waiting for a response, so they are blocked in BOTH modes.
+const UI_DISALLOWED_TOOLS = ["AskUserQuestion"];
+
+// Whitelist CodeBuddy built-in tools per tool-integration mode.
+const MCP_MODE_TOOLS = [];
+const SKILLS_MODE_TOOLS = ["Bash"];
+
+const CODEBUDDY_IMAGE_MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+
+function isCodebuddyImageAttachment(attachment) {
+  return Boolean(
+    attachment &&
+    CODEBUDDY_IMAGE_MEDIA_TYPES.has(String(attachment.mediaType || "").toLowerCase()) &&
+    attachment.base64Data,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Thinking config
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse env-based thinking config into the SDK's thinking option.
+ * Accepts: "adaptive" | "enabled" | "enabled:16000" | "disabled" | ""
+ */
+function parseCodebuddyThinking(value) {
+  if (!value || typeof value !== "string") return undefined;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return undefined;
+  if (trimmed === "adaptive") return { type: "adaptive" };
+  if (trimmed === "enabled") return { type: "enabled", budgetTokens: 16000 };
+  if (trimmed.startsWith("enabled:")) {
+    const budget = parseInt(trimmed.slice(8), 10);
+    if (Number.isFinite(budget) && budget > 0) return { type: "enabled", budgetTokens: budget };
+    return { type: "enabled", budgetTokens: 16000 };
+  }
+  if (trimmed === "disabled") return { type: "disabled" };
+  return undefined;
+}
+
+/**
+ * Serialize thinking config to env pairs for storage/display.
+ */
+function buildCodebuddyThinkingEnv(thinking) {
+  if (!thinking || typeof thinking !== "object") return {};
+  if (thinking.type === "adaptive") return { NETCATTY_CODEBUDDY_THINKING: "adaptive" };
+  if (thinking.type === "enabled") {
+    const budget = thinking.budgetTokens || 16000;
+    return { NETCATTY_CODEBUDDY_THINKING: budget === 16000 ? "enabled" : `enabled:${budget}` };
+  }
+  if (thinking.type === "disabled") return { NETCATTY_CODEBUDDY_THINKING: "disabled" };
+  return {};
+}
+
+// ---------------------------------------------------------------------------
+// MCP servers
+// ---------------------------------------------------------------------------
 
 /** Convert neutral injectMcp configs into the SDK's keyed mcpServers map. */
 function toSdkMcpServers(injectedMcpServers) {
@@ -29,25 +88,63 @@ function toSdkMcpServers(injectedMcpServers) {
   return map;
 }
 
+// ---------------------------------------------------------------------------
+// Query options
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve built-in tools for the active tool-integration mode.
+ */
+function codebuddyBuiltinTools(toolIntegrationMode) {
+  return toolIntegrationMode === "skills"
+    ? [...SKILLS_MODE_TOOLS]
+    : [...MCP_MODE_TOOLS];
+}
+
 function buildCodebuddyQueryOptions({
   cwd, model, env, injectedMcpServers, abortController,
+  resume, pathToCodebuddyCode, toolIntegrationMode, thinking,
 }) {
   const options = {
     cwd,
+    includePartialMessages: true,
     permissionMode: "bypassPermissions",
     mcpServers: toSdkMcpServers(injectedMcpServers),
+    allowedTools: codebuddyBuiltinTools(toolIntegrationMode),
+    disallowedTools: [...UI_DISALLOWED_TOOLS],
     env,
   };
   if (model) options.model = model;
   if (abortController) options.abortController = abortController;
+  // Resume prior session for multi-turn context continuity.
+  if (resume) options.resume = resume;
+  // CLI executable path (auto-discovery if omitted).
+  if (pathToCodebuddyCode) options.pathToCodebuddyCode = pathToCodebuddyCode;
+  // Thinking mode from env marker or explicit param.
+  const thinkingConfig = thinking || parseCodebuddyThinking(env?.NETCATTY_CODEBUDDY_THINKING);
+  if (thinkingConfig) {
+    options.thinking = thinkingConfig;
+    if (thinkingConfig.type === "enabled" && thinkingConfig.budgetTokens) {
+      options.maxThinkingTokens = thinkingConfig.budgetTokens;
+    }
+  }
   return options;
 }
 
+// ---------------------------------------------------------------------------
+// Message translation
+// ---------------------------------------------------------------------------
+
 /**
  * Translate one CodeBuddy SDK message into emitter calls.
- * CodeBuddy SDK (Preview) does NOT support includePartialMessages, so text
- * arrives as complete TextBlock within assistant messages rather than via
- * streaming deltas. Tool calls and results are also content blocks.
+ *
+ * With includePartialMessages enabled:
+ * - Streaming text/reasoning arrives via stream_event (content_block_delta).
+ * - The consolidated assistant TEXT block is skipped to avoid duplication,
+ *   but assistant TOOL_USE blocks remain the authoritative source for tool calls.
+ *
+ * Without includePartialMessages (fallback):
+ * - Text arrives as complete TextBlock within assistant messages.
  */
 function translateCodebuddyMessage(message, emitter) {
   if (!message || typeof message !== "object") return;
@@ -58,23 +155,61 @@ function translateCodebuddyMessage(message, emitter) {
     return;
   }
 
-  if (type === "assistant" && message.message && Array.isArray(message.message.content)) {
-    for (const block of message.message.content) {
-      if (!block || typeof block !== "object") continue;
-      if (block.type === "text" && block.text) {
-        emitter.text(block.text);
-      } else if (block.type === "tool_use") {
-        emitter.toolCall(block.name, block.input || {}, block.id);
-      } else if (block.type === "tool_result") {
-        const output = typeof block.content === "string"
-          ? block.content
-          : JSON.stringify(block.content);
-        emitter.toolResult(block.tool_use_id || "", output, undefined);
+  // Streaming deltas (when includePartialMessages is enabled).
+  if (type === "stream_event" && message.event) {
+    const ev = message.event;
+    if (ev.type === "content_block_delta" && ev.delta) {
+      if (ev.delta.type === "text_delta" && ev.delta.text) {
+        emitter.text(ev.delta.text);
+      } else if (ev.delta.type === "thinking_delta" && ev.delta.thinking) {
+        emitter.reasoning(ev.delta.thinking);
       }
     }
     return;
   }
-  // 'result' carries final duration/cost — handled by the run loop.
+
+  if (type === "assistant" && message.message && Array.isArray(message.message.content)) {
+    for (const block of message.message.content) {
+      if (!block || typeof block !== "object") continue;
+      if (block.type === "tool_use") {
+        emitter.toolCall(block.name, block.input || {}, block.id);
+      }
+      // text blocks intentionally skipped (already streamed via stream_event).
+    }
+    return;
+  }
+
+  if (type === "user" && message.message && Array.isArray(message.message.content)) {
+    for (const block of message.message.content) {
+      if (block?.type === "tool_result") {
+        const out = typeof block.content === "string"
+          ? block.content
+          : JSON.stringify(block.content);
+        emitter.toolResult(block.tool_use_id, out, undefined);
+      }
+    }
+    return;
+  }
+
+  if (type === "status" && message.message) {
+    emitter.status(message.message);
+    return;
+  }
+
+  // result carries final duration/cost/usage — emit as status summary.
+  if (type === "result") {
+    const parts = [];
+    if (message.num_turns) parts.push(`${message.num_turns} turns`);
+    if (message.total_cost_usd > 0) parts.push(`$${message.total_cost_usd.toFixed(4)}`);
+    if (message.is_error && Array.isArray(message.errors) && message.errors.length > 0) {
+      parts.push(`errors: ${message.errors.join("; ")}`);
+    }
+    if (parts.length > 0) {
+      emitter.status(`CodeBuddy: ${parts.join(", ")}`);
+    }
+    return;
+  }
+  // tool_progress, compact_boundary — no renderer mapping.
 }
 
 /** Classify a spawn failure for user-friendly error messages. */
@@ -87,6 +222,41 @@ function classifyCodebuddySpawnError(error) {
     /not found/i.test(msg);
   return { isSpawnEnoent, message: msg };
 }
+
+// ---------------------------------------------------------------------------
+// Prompt input (with optional image attachments)
+// ---------------------------------------------------------------------------
+
+function buildCodebuddyPromptInput(prompt, attachments) {
+  const imageAttachments = Array.isArray(attachments)
+    ? attachments.filter(isCodebuddyImageAttachment)
+    : [];
+  if (imageAttachments.length === 0) return String(prompt || "");
+
+  const content = [{ type: "text", text: String(prompt || "") }];
+  for (const attachment of imageAttachments) {
+    content.push({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: String(attachment.mediaType).toLowerCase(),
+        data: attachment.base64Data,
+      },
+    });
+  }
+
+  return (async function* codebuddyPromptInput() {
+    yield {
+      type: "user",
+      message: { role: "user", content },
+      parent_tool_use_id: null,
+    };
+  }());
+}
+
+// ---------------------------------------------------------------------------
+// Run turn
+// ---------------------------------------------------------------------------
 
 /**
  * Run a CodeBuddy turn. Streams events via `emitter`, resolves with { sessionId }.
@@ -101,19 +271,22 @@ async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn
   let query = queryFn;
   if (!query) {
     let sdk;
-    try { sdk = await import("@tencent-ai/agent-sdk"); } catch { emitter.emitError("CodeBuddy Agent SDK not installed. Run: npm install @tencent-ai/agent-sdk"); return { sessionId: null }; }
+    try { sdk = await import("@tencent-ai/agent-sdk"); } catch {
+      emitter.emitError("CodeBuddy Agent SDK not installed. Run: npm install @tencent-ai/agent-sdk");
+      return { sessionId: null };
+    }
     query = sdk.query;
   }
+
+  const promptInput = buildCodebuddyPromptInput(prompt, attachments);
 
   let sessionId = null;
   let hasContent = false;
   let queryRef = null;
   try {
-    queryRef = query({ prompt: String(prompt || ""), options });
+    queryRef = query({ prompt: promptInput, options });
     for await (const message of queryRef) {
       if (options.abortController?.signal?.aborted) {
-        // CodeBuddy SDK uses interrupt() rather than AbortController; call it
-        // if available to stop the running query cleanly.
         if (typeof queryRef.interrupt === "function") {
           try { await queryRef.interrupt(); } catch { /* best effort */ }
         }
@@ -122,7 +295,10 @@ async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn
       if (message?.session_id && message.session_id !== sessionId) {
         sessionId = message.session_id;
       }
-      if (message?.type === "assistant" && Array.isArray(message?.message?.content) && message.message.content.length > 0) {
+      if (
+        message?.type === "stream_event" ||
+        (message?.type === "assistant" && Array.isArray(message?.message?.content) && message.message.content.length > 0)
+      ) {
         hasContent = true;
       }
       translateCodebuddyMessage(message, emitter);
@@ -150,16 +326,72 @@ async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn
   }
 }
 
-// CodeBuddy SDK has no listModels API; the UI falls back to curated presets.
-async function listCodebuddyModels() {
-  return [];
+// ---------------------------------------------------------------------------
+// Model listing
+// ---------------------------------------------------------------------------
+
+/** Map CodeBuddy SDK ModelInfo[] → renderer preset shape {id, name, description}. */
+function mapCodebuddyModels(models) {
+  if (!Array.isArray(models)) return [];
+  return models
+    .filter((m) => m && (m.modelId || m.value))
+    .map((m) => ({
+      id: m.modelId || m.value,
+      name: m.name || m.displayName || m.modelId || m.value,
+      description: m.description,
+    }));
+}
+
+/**
+ * Fetch available CodeBuddy models via the SDK control channel. Opens a
+ * streaming (idle) session so no turn is billed, asks supportedModels(), then
+ * tears down. Returns [] on failure (caller falls back to curated presets).
+ * @param {object} args
+ * @param {string} [args.pathToCodebuddyCode]
+ * @param {object} [args.env]
+ * @param {Function} [args.queryFn] inject query() for tests
+ */
+async function listCodebuddyModels({ pathToCodebuddyCode, env, queryFn }) {
+  let query = queryFn;
+  if (!query) {
+    let sdk;
+    try { sdk = await import("@tencent-ai/agent-sdk"); } catch { return []; }
+    query = sdk.query;
+  }
+  const abortController = new AbortController();
+  async function* idleInput() {
+    await new Promise((resolve) => {
+      if (abortController.signal.aborted) return resolve();
+      abortController.signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+  }
+  const q = query({
+    prompt: idleInput(),
+    options: { pathToCodebuddyCode, env, abortController, includePartialMessages: false },
+  });
+  try {
+    return mapCodebuddyModels(await q.supportedModels());
+  } catch {
+    return [];
+  } finally {
+    abortController.abort();
+    try { await q.return?.(undefined); } catch { /* best effort */ }
+  }
 }
 
 module.exports = {
   buildCodebuddyQueryOptions,
   translateCodebuddyMessage,
   classifyCodebuddySpawnError,
+  buildCodebuddyPromptInput,
+  buildCodebuddyThinkingEnv,
+  parseCodebuddyThinking,
   toSdkMcpServers,
   runCodebuddyTurn,
   listCodebuddyModels,
+  mapCodebuddyModels,
+  codebuddyBuiltinTools,
+  UI_DISALLOWED_TOOLS,
+  MCP_MODE_TOOLS,
+  SKILLS_MODE_TOOLS,
 };

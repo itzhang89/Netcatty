@@ -108,7 +108,7 @@ export const ruAiMessages: Messages = {
 
   // AI CodeBuddy Code
   'ai.codebuddy.title': 'CodeBuddy Code',
-  'ai.codebuddy.description': 'Использует CodeBuddy Code через официальный Agent SDK (`@tencent-ai/agent-sdk`, Preview). После обнаружения может быть выбран как внешний агент для программирования.',
+  'ai.codebuddy.description': 'Использует CodeBuddy Code через официальный Agent SDK (`@tencent-ai/agent-sdk`). После обнаружения может быть выбран как внешний агент для программирования.',
   'ai.codebuddy.detecting': 'Обнаружение...',
   'ai.codebuddy.detected': 'Обнаружен',
   'ai.codebuddy.notFound': 'Не найден',
