@@ -561,7 +561,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isVisible, currentAgentConfig, currentAgentId, isCopilotExternalAgent, isClaudeManagedAgent, isCodexManagedAgent, setAgentModel]);
+  }, [isVisible, currentAgentConfig, currentAgentId, isCodexManagedAgent, setAgentModel]);
 
   const hasCodexCustomConfig = codexCustomConfigResolved && isCodexManagedAgent;
 

@@ -236,7 +236,6 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({ messages, isStreaming
                         isError={tr.isError}
                       />
                     </div>
-</div>
                     </React.Profiler>
                   )),
                 )}
