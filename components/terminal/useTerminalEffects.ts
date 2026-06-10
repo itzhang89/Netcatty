@@ -652,6 +652,16 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         await fontFaceSet.ready;
         if (cancelled) return;
 
+        // Ensure bundled Nerd Font icon fallbacks are loaded at the terminal's
+        // cell size. Shell prompts can arrive before these faces finish loading
+        // on cold start (Linux), leaving Powerline glyphs cached as tofu (#1363).
+        try {
+          await fontFaceSet.load(`${effectiveFontSize}px "Symbols Nerd Font Mono"`);
+        } catch (err) {
+          logger.warn("Nerd Font preload failed", err);
+        }
+        if (cancelled) return;
+
         const term = termRef.current as {
           cols: number;
           rows: number;
@@ -662,6 +672,13 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           term?.renderer?.remeasureFont?.();
         } catch (err) {
           logger.warn("Font remeasure failed", err);
+        }
+
+        // remeasureFont does not invalidate cells rasterized before fonts were ready.
+        xtermRuntimeRef.current?.clearTextureAtlas();
+        const visibleTerm = termRef.current;
+        if (visibleTerm) {
+          forceSyncRenderAfterResize(visibleTerm);
         }
 
         try {
