@@ -198,6 +198,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     onToggleWorkspaceViewModeRef: s.onToggleWorkspaceViewModeRef,
     prevFocusedSessionIdRef,
     previewTargetSessionId: themeState.previewTargetSessionId,
+    refocusActiveTerminalSession: s.refocusActiveTerminalSession,
     requestAnimationFrame,
     ResizeObserver,
     sessionActivityStore: s.sessionActivityStore,
