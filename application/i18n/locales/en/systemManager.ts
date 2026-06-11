@@ -44,6 +44,8 @@ export const enSystemManagerMessages: Messages = {
   'systemManager.processes.elapsed': 'Elapsed',
   'systemManager.processes.stat': 'State',
   'systemManager.processes.meta': '{{count}} process(es)',
+  'systemManager.processes.loading': 'Loading processes…',
+  'systemManager.processes.loadingMore': 'Loading more processes…',
   'systemManager.processes.state.running': 'Running',
   'systemManager.processes.state.sleeping': 'Sleeping',
   'systemManager.processes.state.stopped': 'Stopped',
@@ -55,6 +57,10 @@ export const enSystemManagerMessages: Messages = {
   'systemManager.processes.sort.user': 'User',
 
   'systemManager.common.dismiss': 'Dismiss',
+  'systemManager.common.checkingAvailability': 'Checking availability…',
+  'systemManager.common.loading': 'Loading…',
+  'systemManager.common.loadingDetails': 'Loading details…',
+  'systemManager.common.loadingStats': 'Loading stats…',
 
   'systemManager.tmux.new': 'New',
   'systemManager.tmux.search': 'Search sessions…',

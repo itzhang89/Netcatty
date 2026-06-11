@@ -1,7 +1,6 @@
-import { Pause, Pencil, Play, Trash2, Zap } from 'lucide-react';
-import React, { memo, useCallback, useState } from 'react';
+import { Loader2, Pause, Pencil, Play, Trash2, Zap } from 'lucide-react';
+import React, { memo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
-import type { useSystemManagerBackend } from '../../application/state/useSystemManagerBackend';
 import type { DockerContainerAction, DockerContainerInfo, DockerStatInfo } from '../../domain/systemManager/types';
 import { getContainerFlags } from '../../domain/systemManager/containerState';
 import { DockerInspectView } from './DockerInspectView';
@@ -9,18 +8,17 @@ import { ResourceBar } from './ResourceBar';
 import {
   SystemPanelActionChip,
   SystemPanelDetailStrip,
+  SystemPanelInlineError,
 } from './SystemPanelUi';
 import { SystemPanelPromptDialog } from './SystemPanelPromptDialog';
-import { usePolling } from './hooks/useSystemManager';
-
-type Backend = ReturnType<typeof useSystemManagerBackend>;
 
 interface DockerContainerDetailProps {
   container: DockerContainerInfo;
-  sessionId: string;
-  backend: Backend;
-  statsRefreshIntervalSec: number;
   inspect: Record<string, unknown> | null;
+  inspectError?: string | null;
+  inspectLoading?: boolean;
+  stat?: DockerStatInfo | null;
+  statsLoading?: boolean;
   pendingAction: DockerContainerAction | null;
   onCloseInspect: () => void;
   onRunAction: (containerId: string, action: DockerContainerAction, newName?: string) => Promise<void>;
@@ -28,10 +26,11 @@ interface DockerContainerDetailProps {
 
 export const DockerContainerDetail = memo(function DockerContainerDetail({
   container,
-  sessionId,
-  backend,
-  statsRefreshIntervalSec,
   inspect,
+  inspectError = null,
+  inspectLoading = false,
+  stat = null,
+  statsLoading = false,
   pendingAction,
   onCloseInspect,
   onRunAction,
@@ -40,20 +39,6 @@ export const DockerContainerDetail = memo(function DockerContainerDetail({
   const shortId = container.id.slice(0, 12);
   const { isRunning, isPaused } = getContainerFlags(container);
 
-  const statsFetcher = useCallback(async () => {
-    const result = await backend.getDockerStats({ sessionId, ids: [container.id] });
-    if (!result.success || !result.stats) {
-      throw new Error(result.error || t('systemManager.errors.loadDockerStats'));
-    }
-    return result.stats;
-  }, [backend, container.id, sessionId, t]);
-
-  const statsIntervalMs = Math.max(2, statsRefreshIntervalSec) * 1000;
-  // docker stats still reports paused containers, so keep polling them.
-  const { data: stats } = usePolling<DockerStatInfo[]>(statsFetcher, statsIntervalMs, isRunning || isPaused);
-
-  const stat = stats?.find((s) => s.id === container.id || s.id.startsWith(shortId)) ?? stats?.[0];
-
   const [renameOpen, setRenameOpen] = useState(false);
   const actionBusy = pendingAction !== null;
 
@@ -61,13 +46,19 @@ export const DockerContainerDetail = memo(function DockerContainerDetail({
     <>
       <SystemPanelDetailStrip>
         {container.ports && (
-          <div className="text-[10px] text-muted-foreground mb-2 truncate">{container.ports}</div>
+          <div className="text-[10px] text-muted-foreground mb-2 break-all">{container.ports}</div>
         )}
         {stat && (
           <div className="space-y-1 mb-2">
             <ResourceBar label="CPU" value={stat.cpuPercent} />
             <ResourceBar label="MEM" value={stat.memPercent} />
             <div className="text-[10px] text-muted-foreground">{stat.netIO} · {stat.memUsage}</div>
+          </div>
+        )}
+        {!stat && statsLoading && (isRunning || isPaused) && (
+          <div className="mb-2 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+            <Loader2 size={11} className="animate-spin" />
+            {t('systemManager.common.loadingStats')}
           </div>
         )}
         <div className="flex flex-wrap items-center gap-0.5">
@@ -94,6 +85,15 @@ export const DockerContainerDetail = memo(function DockerContainerDetail({
           </SystemPanelActionChip>
         </div>
       </SystemPanelDetailStrip>
+      {inspectLoading && !inspect && (
+        <div className="flex items-center gap-1.5 border-b border-border/40 bg-muted/20 px-3 py-2 text-[10px] text-muted-foreground">
+          <Loader2 size={11} className="animate-spin" />
+          {t('systemManager.common.loadingDetails')}
+        </div>
+      )}
+      {inspectError && !inspect && (
+        <SystemPanelInlineError message={inspectError} />
+      )}
       {inspect && (
         <DockerInspectView
           kind="container"

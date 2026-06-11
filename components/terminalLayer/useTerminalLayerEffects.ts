@@ -22,6 +22,8 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
     sidePanelWidth,
   });
 
+  const activityEscapeFiltersRef = useRef<any>(new Map());
+
   const remeasureWorkspaceArea = useCallback(() => {
     const el = workspaceInnerRef.current;
     if (!el) return;
@@ -219,11 +221,22 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
     }, [activeTabId, sessions]);
   
   useEffect(() => {
+      const activeSessionIds = new Set(activityTrackedSessions.map((session) => session.id));
+      for (const sessionId of activityEscapeFiltersRef.current.keys()) {
+        if (!activeSessionIds.has(sessionId)) {
+          activityEscapeFiltersRef.current.delete(sessionId);
+        }
+      }
+
       const unsubscribers = activityTrackedSessions.map((session) => {
-        const filter = new ChunkedEscapeFilter();
+        let filter = activityEscapeFiltersRef.current.get(session.id);
+        if (!filter) {
+          filter = new ChunkedEscapeFilter();
+          activityEscapeFiltersRef.current.set(session.id, filter);
+        }
         return onSessionData(session.id, (chunk) => {
           if (!hasNotifiableTerminalOutput(filter, chunk)) return;
-  
+
           if (!shouldMarkSessionActivity(activeTabIdRef.current, session)) {
             return;
           }

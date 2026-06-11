@@ -203,6 +203,19 @@ export const SystemPanelEmpty = memo(function SystemPanelEmpty({
   );
 });
 
+export const SystemPanelLoading = memo(function SystemPanelLoading({
+  message,
+}: {
+  message: string;
+}) {
+  return (
+    <div className="flex min-h-[180px] flex-col items-center justify-center px-4 py-10 text-center text-xs text-muted-foreground">
+      <Loader2 size={18} className="mb-2 animate-spin opacity-70" />
+      <span>{message}</span>
+    </div>
+  );
+});
+
 export const SystemPanelError = memo(function SystemPanelError({
   message,
   onRetry,
@@ -292,7 +305,7 @@ export const SystemPanelRow = memo(function SystemPanelRow({
       {trailing}
       {actions && (
         <div
-          className="flex shrink-0 items-center justify-end gap-0.5 invisible group-hover:visible group-focus-within:visible"
+          className="flex shrink-0 items-center justify-end gap-0.5"
           onClick={(e) => e.stopPropagation()}
         >
           {actions}

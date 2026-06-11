@@ -115,7 +115,9 @@ export function useAIState() {
 
   // ── Sessions ──
   const [sessions, setSessionsRaw] = useState<AISession[]>(() =>
-    localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS) ?? []
+    latestAISessionsSnapshot
+      ?? localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS)
+      ?? []
   );
   // Ref that always holds the latest sessions for use inside debounced callbacks
   const sessionsRef = useRef(sessions);
@@ -124,7 +126,9 @@ export function useAIState() {
   }, [sessions]);
   // Per-scope active session: keyed by `${scopeType}:${scopeTargetId}`
   const [activeSessionIdMap, setActiveSessionIdMapRaw] = useState<Record<string, string | null>>(() =>
-    localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP) ?? {}
+    latestAIActiveSessionMapSnapshot
+      ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
+      ?? {}
   );
   // Per-scope draft/view state is intentionally memory-only so a relaunch
   // does not restore stale composer input or panel intent against new history.
@@ -185,7 +189,7 @@ export function useAIState() {
   }, [panelViewByScope]);
 
   useEffect(() => {
-    const validSessionIds = new Set(sessions.map((session) => session.id));
+    const validSessionIds = new Set<string>(sessions.map((session) => session.id));
     let changed = false;
     const nextActiveSessionIdMap: Record<string, string | null> = {};
 

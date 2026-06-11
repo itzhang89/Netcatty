@@ -3,6 +3,7 @@ import type { Messages } from '../types';
 export const enAiMessages: Messages = {
   // AI Settings
   'ai.agentSettings': 'Agent Settings',
+  'ai.chat.preparing': 'Preparing…',
   'ai.title': 'AI',
   'ai.description': 'Configure AI providers, agents, and safety settings',
   'ai.providers': 'Providers',

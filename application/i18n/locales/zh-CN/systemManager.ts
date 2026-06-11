@@ -44,6 +44,8 @@ export const zhCnSystemManagerMessages: Messages = {
   'systemManager.processes.elapsed': '运行时长',
   'systemManager.processes.stat': '状态',
   'systemManager.processes.meta': '{{count}} 个进程',
+  'systemManager.processes.loading': '正在加载进程…',
+  'systemManager.processes.loadingMore': '正在显示更多进程…',
   'systemManager.processes.state.running': '运行中',
   'systemManager.processes.state.sleeping': '睡眠',
   'systemManager.processes.state.stopped': '已暂停',
@@ -55,6 +57,10 @@ export const zhCnSystemManagerMessages: Messages = {
   'systemManager.processes.sort.user': '用户',
 
   'systemManager.common.dismiss': '关闭',
+  'systemManager.common.checkingAvailability': '正在检查可用状态…',
+  'systemManager.common.loading': '正在加载…',
+  'systemManager.common.loadingDetails': '正在加载详情…',
+  'systemManager.common.loadingStats': '正在加载性能数据…',
 
   'systemManager.tmux.new': '新建',
   'systemManager.tmux.search': '搜索会话…',

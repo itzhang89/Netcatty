@@ -3,6 +3,7 @@ import type { Messages } from '../types';
 export const ruAiMessages: Messages = {
   // AI Settings
   'ai.agentSettings': 'Настройки агента',
+  'ai.chat.preparing': 'Подготовка…',
   'ai.title': 'AI',
   'ai.description': 'Настройка AI-провайдеров, агентов и параметров безопасности',
   'ai.providers': 'Провайдеры',

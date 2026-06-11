@@ -3,6 +3,7 @@ import type { Messages } from '../types';
 export const zhCNAiMessages: Messages = {
   // AI Settings
   'ai.agentSettings': 'Agent 设置',
+  'ai.chat.preparing': '准备中…',
   'ai.title': 'AI',
   'ai.description': '配置 AI 提供商、Agent 和安全设置',
   'ai.providers': '提供商',

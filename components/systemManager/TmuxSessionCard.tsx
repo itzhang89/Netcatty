@@ -1,17 +1,17 @@
 import {
   Loader2, MonitorPlay, Pencil, Plus, Trash2, Unplug,
 } from 'lucide-react';
-import React, { memo, useCallback, useEffect, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import type { useSystemManagerBackend } from '../../application/state/useSystemManagerBackend';
 import { buildTmuxAttachCommand } from '../../domain/systemManager/tmuxShell';
 import type {
-  TmuxClientInfo,
   TmuxManageAction,
   TmuxSessionInfo,
-  TmuxWindowInfo,
 } from '../../domain/systemManager/types';
 import type { TerminalSession } from '../../types';
+import type { AsyncRecordState } from './hooks/useAsyncRecordCache';
+import type { TmuxSessionDetails } from './TmuxManagerTab';
 import {
   SystemPanelCollapsible,
   SystemPanelDetailStrip,
@@ -46,6 +46,9 @@ interface TmuxSessionCardProps {
   sessionId: string;
   parentSession: TerminalSession;
   backend: Backend;
+  detailsRecord?: AsyncRecordState<TmuxSessionDetails>;
+  onLoadDetails: (session: TmuxSessionInfo, options?: { force?: boolean; urgent?: boolean }) => Promise<void>;
+  onRefreshDetails: (session: TmuxSessionInfo) => Promise<void>;
   onSessionsChanged: () => Promise<void>;
 }
 
@@ -54,74 +57,42 @@ export const TmuxSessionCard = memo(function TmuxSessionCard({
   sessionId,
   parentSession,
   backend,
+  detailsRecord,
+  onLoadDetails,
+  onRefreshDetails,
   onSessionsChanged,
 }: TmuxSessionCardProps) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
-  const [loadingDetails, setLoadingDetails] = useState(false);
-  const [windows, setWindows] = useState<TmuxWindowInfo[]>([]);
-  const [clients, setClients] = useState<TmuxClientInfo[]>([]);
   const [renamePrompt, setRenamePrompt] = useState<RenamePromptTarget | null>(null);
   const [newWindowOpen, setNewWindowOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [windowsLoadDetail, setWindowsLoadDetail] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<PendingTarget | null>(null);
 
-  const formatTmuxLoadError = useCallback((
-    message: string,
-    debug?: { lastOutput?: string; tried?: string[] },
-  ) => {
-    const parts = [message];
-    if (debug?.lastOutput) parts.push(debug.lastOutput);
-    if (debug?.tried?.length) {
-      parts.push(t('systemManager.tmux.lastCommand', { command: debug.tried[debug.tried.length - 1] ?? '' }));
-    }
-    return parts.filter(Boolean).join(' · ');
-  }, [t]);
-
-  const loadDetails = useCallback(async (): Promise<TmuxWindowInfo[] | null> => {
-    setLoadingDetails(true);
-    setActionError(null);
-    setWindowsLoadDetail(null);
-    try {
-      const [windowsResult, clientsResult] = await Promise.all([
-        backend.listTmuxWindows({ sessionId, sessionName: session.name }),
-        backend.listTmuxClients({ sessionId, sessionName: session.name }),
-      ]);
-      if (!windowsResult.success) {
-        const detail = formatTmuxLoadError(
-          windowsResult.error || t('systemManager.errors.loadTmuxWindows'),
-          windowsResult.debug,
-        );
-        setWindowsLoadDetail(detail);
-        throw new Error(detail);
-      }
-      if (!clientsResult.success) throw new Error(clientsResult.error || t('systemManager.errors.loadTmuxClients'));
-      const freshWindows = windowsResult.windows ?? [];
-      if (freshWindows.length === 0 && session.windows > 0) {
-        const detail = formatTmuxLoadError(
-          t('systemManager.tmux.windowsMismatch', { count: String(session.windows) }),
-          windowsResult.debug,
-        );
-        setWindowsLoadDetail(detail);
-        throw new Error(detail);
-      }
-      setWindows(freshWindows);
-      setClients(clientsResult.clients ?? []);
-      return freshWindows;
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : t('systemManager.errors.actionFailed'));
-      setWindows([]);
-      return null;
-    } finally {
-      setLoadingDetails(false);
-    }
-  }, [backend, formatTmuxLoadError, session.name, session.windows, sessionId, t]);
+  const windows = detailsRecord?.data?.windows ?? [];
+  const clients = detailsRecord?.data?.clients ?? [];
+  const loadingDetails = detailsRecord?.loading ?? false;
+  const windowsLoadDetail = detailsRecord?.error ?? null;
+  const summaryKey = useMemo(
+    () => `${session.name}|${session.created}|${session.windows}|${session.attached}|${session.activity ?? ''}`,
+    [session.activity, session.attached, session.created, session.name, session.windows],
+  );
+  const lastExpandedSummaryKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (expanded) void loadDetails();
-  }, [expanded, loadDetails]);
+    if (!expanded) {
+      lastExpandedSummaryKeyRef.current = null;
+      return;
+    }
+    if (lastExpandedSummaryKeyRef.current === null) {
+      lastExpandedSummaryKeyRef.current = summaryKey;
+      return;
+    }
+    if (lastExpandedSummaryKeyRef.current === summaryKey) return;
+    lastExpandedSummaryKeyRef.current = summaryKey;
+    void onRefreshDetails(session);
+  }, [expanded, onRefreshDetails, session, summaryKey]);
 
   const runAction = async (action: TmuxManageAction) => {
     setBusy(true);
@@ -135,7 +106,7 @@ export const TmuxSessionCard = memo(function TmuxSessionCard({
       if (!result.success) throw new Error(result.error || t('systemManager.errors.actionFailed'));
       const cardWillRemount = action.action === 'killSession' || action.action === 'renameSession';
       if (!cardWillRemount && expanded) {
-        await loadDetails();
+        await onRefreshDetails(session);
       }
       await onSessionsChanged();
     } catch (err) {
@@ -170,7 +141,13 @@ export const TmuxSessionCard = memo(function TmuxSessionCard({
     <>
       <SystemPanelRow
         selected={expanded}
-        onClick={() => setExpanded((v) => !v)}
+        onClick={() => {
+          const nextExpanded = !expanded;
+          setExpanded(nextExpanded);
+          if (nextExpanded) {
+            void onLoadDetails(session, { force: true, urgent: true });
+          }
+        }}
         title={session.name}
         subtitle={t('systemManager.tmux.windows', { count: String(session.windows) })}
         trailing={(

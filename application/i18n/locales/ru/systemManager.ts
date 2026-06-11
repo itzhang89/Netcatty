@@ -44,6 +44,8 @@ export const ruSystemManagerMessages: Messages = {
   'systemManager.processes.elapsed': 'Время работы',
   'systemManager.processes.stat': 'Состояние',
   'systemManager.processes.meta': '{{count}} проц.',
+  'systemManager.processes.loading': 'Загрузка процессов…',
+  'systemManager.processes.loadingMore': 'Загрузка следующих процессов…',
   'systemManager.processes.state.running': 'Активен',
   'systemManager.processes.state.sleeping': 'Сон',
   'systemManager.processes.state.stopped': 'Остановлен',
@@ -55,6 +57,10 @@ export const ruSystemManagerMessages: Messages = {
   'systemManager.processes.sort.user': 'Пользователь',
 
   'systemManager.common.dismiss': 'Закрыть',
+  'systemManager.common.checkingAvailability': 'Проверка доступности…',
+  'systemManager.common.loading': 'Загрузка…',
+  'systemManager.common.loadingDetails': 'Загрузка деталей…',
+  'systemManager.common.loadingStats': 'Загрузка статистики…',
 
   'systemManager.tmux.new': 'Создать',
   'systemManager.tmux.search': 'Поиск сессий…',

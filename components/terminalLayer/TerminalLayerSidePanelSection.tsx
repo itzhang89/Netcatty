@@ -484,7 +484,7 @@ function TerminalLayerSidePanelTabBody({ ctx }: { ctx: SidePanelContext }) {
                   editorWordWrap={editorWordWrap}
                   setEditorWordWrap={setEditorWordWrap}
                   onGetTerminalCwd={getTerminalCwd}
-                  activeTerminalCwd={activeTerminalCwd}
+                  activeTerminalCwd={isVisibleSftpPanel && sftpFollowTerminalCwd ? activeTerminalCwd : null}
                   sftpFollowTerminalCwd={sftpFollowTerminalCwd}
                   onSftpFollowTerminalCwdChange={setSftpFollowTerminalCwd}
                   onRequestTerminalFocus={refocusActiveTerminalSession}

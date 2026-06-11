@@ -1,10 +1,10 @@
 import { Box, FileText, Play, RotateCcw, Square, Terminal } from 'lucide-react';
-import React, { memo, useCallback, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useMemo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import type { useSystemManagerBackend } from '../../application/state/useSystemManagerBackend';
 import { writeSystemManagerDiagnostic } from '../../application/state/systemManagerDiagnostics';
 import type { TerminalSession } from '../../types';
-import type { DockerContainerAction, DockerContainerInfo, TerminalPopupIcon } from '../../domain/systemManager/types';
+import type { DockerContainerAction, DockerContainerInfo, DockerStatInfo, TerminalPopupIcon } from '../../domain/systemManager/types';
 import { dockerContainerInfoEqual } from '../../domain/systemManager/pollEquals';
 import { getContainerFlags, getContainerTone } from '../../domain/systemManager/containerState';
 import { buildDockerExecShellCommand, buildDockerLogsCommand } from '../../domain/systemManager/dockerShell';
@@ -16,6 +16,7 @@ import {
   SystemPanelEmpty,
   SystemPanelError,
   SystemPanelList,
+  SystemPanelLoading,
   SystemPanelMetaBar,
   SystemPanelRefreshButton,
   SystemPanelRoundButton,
@@ -25,6 +26,7 @@ import {
   SystemPanelStatusBadge,
   SystemPanelToolbar,
 } from './SystemPanelUi';
+import { useAsyncRecordCache } from './hooks/useAsyncRecordCache';
 import { usePolling, useStableTranslate } from './hooks/useSystemManager';
 import { openInteractiveTerminal } from './openInteractiveTerminal';
 import { showSystemManagerError } from './systemManagerToast';
@@ -53,6 +55,7 @@ interface DockerContainersPanelProps {
   sessionId: string;
   parentSession: TerminalSession;
   isVisible: boolean;
+  warmupEnabled?: boolean;
   backend: Backend;
   listRefreshIntervalSec: number;
   statsRefreshIntervalSec: number;
@@ -150,6 +153,7 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
   sessionId,
   parentSession,
   isVisible,
+  warmupEnabled = false,
   backend,
   listRefreshIntervalSec,
   statsRefreshIntervalSec,
@@ -159,10 +163,6 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<ContainerFilter>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [inspect, setInspect] = useState<Record<string, unknown> | null>(null);
-  // Invalidates in-flight inspect fetches when the selection changes —
-  // a slow response for container A must not render under container B.
-  const inspectSeqRef = useRef(0);
   // Spinner feedback while a container action (stop/restart/…) runs;
   // cleared only after the follow-up list refresh lands.
   const [pendingAction, setPendingAction] = useState<{ id: string; action: DockerContainerAction } | null>(null);
@@ -179,13 +179,15 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
   const { data: containers, error, loading, refresh } = usePolling<DockerContainerInfo[]>(
     containersFetcher,
     listIntervalMs,
-    isVisible,
+    isVisible || warmupEnabled,
     (prev, next) => mergePollListByKey(prev, next, (c) => c.id, dockerContainerInfoEqual),
+    { poll: isVisible, resetKey: sessionId },
   );
 
-  const matched = useMemo(() => {
+  const matched = useMemo<DockerContainerInfo[]>(() => {
     const q = query.trim().toLowerCase();
-    return (containers ?? []).filter((container) => {
+    const containerList = containers ?? [];
+    return containerList.filter((container) => {
       const { isRunning, isPaused } = getContainerFlags(container);
       if (filter === 'running' && !isRunning) return false;
       if (filter === 'stopped' && (isRunning || isPaused)) return false;
@@ -202,7 +204,7 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
     (a: DockerContainerInfo, b: DockerContainerInfo) => a.name.localeCompare(b.name),
     [],
   );
-  const displayList = useStableListOrder(
+  const displayList = useStableListOrder<DockerContainerInfo, string>(
     matched,
     (c) => c.id,
     `${filter}|${query}`,
@@ -213,6 +215,69 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
     () => displayList.find((c) => c.id === selectedId) ?? null,
     [displayList, selectedId],
   );
+
+  const statContainerIds = useMemo(
+    () => {
+      if (!selectedContainer) return [];
+      const { isRunning, isPaused } = getContainerFlags(selectedContainer);
+      return isRunning || isPaused ? [selectedContainer.id] : [];
+    },
+    [selectedContainer],
+  );
+  const statsFetcher = useCallback(async () => {
+    if (statContainerIds.length === 0) return [];
+    const result = await backend.getDockerStats({ sessionId, ids: statContainerIds });
+    if (!result.success || !result.stats) {
+      throw new Error(result.error || stableT('systemManager.errors.loadDockerStats'));
+    }
+    return result.stats;
+  }, [backend, sessionId, stableT, statContainerIds]);
+
+  const statsIntervalMs = Math.max(2, statsRefreshIntervalSec) * 1000;
+  const { data: stats, loading: statsLoading } = usePolling<DockerStatInfo[]>(
+    statsFetcher,
+    statsIntervalMs,
+    isVisible && statContainerIds.length > 0,
+    undefined,
+    { poll: isVisible, resetKey: `${sessionId}:${statContainerIds.join(',')}` },
+  );
+
+  const statsByContainerId = useMemo(() => {
+    const map = new Map<string, DockerStatInfo>();
+    for (const stat of stats ?? []) {
+      map.set(stat.id, stat);
+      map.set(stat.id.slice(0, 12), stat);
+    }
+    return map;
+  }, [stats]);
+
+  const getContainerInspectKey = useCallback((container: DockerContainerInfo) => (
+    `${sessionId}:${container.id}`
+  ), [sessionId]);
+  const fetchContainerInspect = useCallback(async (container: DockerContainerInfo) => {
+    const result = await backend.dockerInspect({
+      sessionId,
+      containerId: container.id.slice(0, 12),
+    });
+    if (!result.success) {
+      throw new Error(result.error || stableT('systemManager.errors.actionFailed'));
+    }
+    return result.inspect ?? null;
+  }, [backend, sessionId, stableT]);
+  const {
+    records: inspectByContainerId,
+    loadRecord: loadContainerInspect,
+    refreshRecord: refreshContainerInspect,
+    invalidateMatching: invalidateContainerInspectMatching,
+  } = useAsyncRecordCache<DockerContainerInfo, Record<string, unknown>>({
+    items: containers ?? [],
+    enabled: isVisible && (containers?.length ?? 0) > 0,
+    getKey: getContainerInspectKey,
+    fetchRecord: fetchContainerInspect,
+    prefetchLimit: 24,
+    prefetchDelayMs: 40,
+    staleTimeMs: 20_000,
+  });
 
   const runAction = useCallback(async (
     containerId: string,
@@ -234,34 +299,42 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
         showSystemManagerError(result.error || t('systemManager.errors.actionFailed'), t('common.error'));
         return;
       }
+      const affectedContainer = (containers ?? []).find((container) => (
+        container.id === containerId || container.id.startsWith(containerId)
+      ));
+      invalidateContainerInspectMatching((key) => (
+        key === `${sessionId}:${containerId}` || key.startsWith(`${sessionId}:${containerId}`)
+      ));
       if (action === 'rm') {
         setSelectedId(null);
-        setInspect(null);
-        inspectSeqRef.current += 1;
       }
       await refresh();
+      if (affectedContainer && action !== 'rm') {
+        void refreshContainerInspect(affectedContainer);
+      }
     } finally {
       setPendingAction(null);
     }
-  }, [backend, refresh, sessionId, t]);
+  }, [
+    backend,
+    containers,
+    invalidateContainerInspectMatching,
+    refresh,
+    refreshContainerInspect,
+    sessionId,
+    t,
+  ]);
 
   const handleRowAction = useCallback((container: DockerContainerInfo, action: DockerContainerAction) => {
     void runAction(container.id.slice(0, 12), action);
   }, [runAction]);
 
-  const selectContainer = useCallback(async (container: DockerContainerInfo) => {
+  const selectContainer = useCallback((container: DockerContainerInfo) => {
     const next = selectedId === container.id ? null : container.id;
     setSelectedId(next);
-    setInspect(null);
-    const seq = ++inspectSeqRef.current;
     if (!next) return;
-    const result = await backend.dockerInspect({
-      sessionId,
-      containerId: container.id.slice(0, 12),
-    });
-    if (inspectSeqRef.current !== seq) return;
-    setInspect(result.success ? (result.inspect ?? null) : null);
-  }, [backend, selectedId, sessionId]);
+    void loadContainerInspect(container, { force: true, urgent: true });
+  }, [loadContainerInspect, selectedId]);
 
   const openShell = useCallback(async (container: DockerContainerInfo) => {
     const id = container.id.slice(0, 12);
@@ -354,6 +427,9 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
         {error && (
           <SystemPanelError message={error} onRetry={() => void refresh()} retryLabel={t('history.action.retry')} loading={loading} />
         )}
+        {!error && displayList.length === 0 && loading && (
+          <SystemPanelLoading message={t('systemManager.common.loading')} />
+        )}
         {!error && displayList.length === 0 && !loading && (
           <SystemPanelEmpty icon={Box} message={t('systemManager.docker.empty')} />
         )}
@@ -363,6 +439,8 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
           const rowPending = pendingAction && pendingAction.id === container.id.slice(0, 12)
             ? pendingAction.action
             : null;
+          const selectedInspectKey = selectedContainer ? getContainerInspectKey(selectedContainer) : null;
+          const selectedInspectRecord = selectedInspectKey ? inspectByContainerId[selectedInspectKey] : undefined;
           return (
             <React.Fragment key={container.id}>
               <DockerContainerRow
@@ -378,12 +456,13 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
                 {selectedContainer && (
                   <DockerContainerDetail
                     container={selectedContainer}
-                    sessionId={sessionId}
-                    backend={backend}
-                    statsRefreshIntervalSec={statsRefreshIntervalSec}
-                    inspect={inspect}
+                    inspect={selectedInspectRecord?.data ?? null}
+                    inspectError={selectedInspectRecord?.error ?? null}
+                    inspectLoading={selectedInspectRecord?.loading ?? false}
+                    stat={statsByContainerId.get(selectedContainer.id) ?? statsByContainerId.get(selectedContainer.id.slice(0, 12)) ?? null}
+                    statsLoading={statsLoading}
                     pendingAction={rowPending}
-                    onCloseInspect={() => { setSelectedId(null); setInspect(null); }}
+                    onCloseInspect={() => { setSelectedId(null); }}
                     onRunAction={runAction}
                   />
                 )}

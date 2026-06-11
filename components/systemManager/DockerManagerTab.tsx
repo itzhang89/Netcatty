@@ -15,6 +15,7 @@ interface DockerManagerTabProps {
   sessionId: string;
   parentSession: TerminalSession;
   isVisible: boolean;
+  warmupEnabled?: boolean;
   backend: Backend;
   listRefreshIntervalSec: number;
   statsRefreshIntervalSec: number;
@@ -24,6 +25,7 @@ export const DockerManagerTab = memo(function DockerManagerTab({
   sessionId,
   parentSession,
   isVisible,
+  warmupEnabled = false,
   backend,
   listRefreshIntervalSec,
   statsRefreshIntervalSec,
@@ -58,23 +60,26 @@ export const DockerManagerTab = memo(function DockerManagerTab({
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col">
-        {subTab === 'containers' ? (
+        <div className={cn('flex-1 min-h-0 flex flex-col', subTab !== 'containers' && 'hidden')}>
           <DockerContainersPanel
             sessionId={sessionId}
             parentSession={parentSession}
-            isVisible={isVisible}
+            isVisible={isVisible && subTab === 'containers'}
+            warmupEnabled={warmupEnabled || (isVisible && subTab !== 'containers')}
             backend={backend}
             listRefreshIntervalSec={listRefreshIntervalSec}
             statsRefreshIntervalSec={statsRefreshIntervalSec}
           />
-        ) : (
+        </div>
+        <div className={cn('flex-1 min-h-0 flex flex-col', subTab !== 'images' && 'hidden')}>
           <DockerImagesPanel
             sessionId={sessionId}
-            isVisible={isVisible}
+            isVisible={isVisible && subTab === 'images'}
+            warmupEnabled={warmupEnabled || (isVisible && subTab !== 'images')}
             backend={backend}
             listRefreshIntervalSec={listRefreshIntervalSec}
           />
-        )}
+        </div>
       </div>
     </SystemPanelShell>
   );

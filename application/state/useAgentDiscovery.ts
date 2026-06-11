@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { startTransition, useCallback, useEffect, useRef, useState } from 'react';
 import type { DiscoveredAgent, ExternalAgentConfig } from '../../infrastructure/ai/types';
 import { getExternalAgentSdkBackend } from '../../infrastructure/ai/managedAgents';
 
@@ -10,6 +10,15 @@ function getBridge(): NetcattyBridge | undefined {
   return (window as unknown as { netcatty?: NetcattyBridge }).netcatty;
 }
 
+const AGENT_DISCOVERY_CACHE_TTL_MS = 60_000;
+let agentDiscoveryCache: {
+  agents: DiscoveredAgent[];
+  apiKeyPresent: boolean;
+  updatedAt: number;
+} | null = null;
+const agentDiscoveryPromises = new Map<string, Promise<DiscoveredAgent[]>>();
+let agentDiscoveryWriteGeneration = 0;
+
 export function useAgentDiscovery(
   externalAgents: ExternalAgentConfig[],
   setExternalAgents?: (value: ExternalAgentConfig[] | ((prev: ExternalAgentConfig[]) => ExternalAgentConfig[])) => void,
@@ -18,28 +27,86 @@ export function useAgentDiscovery(
   const enabled = options?.enabled ?? true;
   const [discoveredAgents, setDiscoveredAgents] = useState<DiscoveredAgent[]>([]);
   const [isDiscovering, setIsDiscovering] = useState(false);
+  const discoverSeqRef = useRef(0);
+  const mountedRef = useRef(true);
+  const enabledRef = useRef(enabled);
+
+  enabledRef.current = enabled;
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+    discoverSeqRef.current += 1;
+  }, []);
 
   const cursorApiKeyPresent = externalAgents.some(
     (agent) => agent.id === "discovered_cursor" && Boolean(agent.apiKey),
   );
 
   const discover = useCallback(async (discoverOptions?: { refreshShellEnv?: boolean }) => {
+    if (!enabledRef.current) return;
     const bridge = getBridge();
     if (!bridge) return;
 
+    const forceRefresh = discoverOptions?.refreshShellEnv === true;
+    const cacheFresh =
+      agentDiscoveryCache
+      && agentDiscoveryCache.apiKeyPresent === cursorApiKeyPresent
+      && Date.now() - agentDiscoveryCache.updatedAt < AGENT_DISCOVERY_CACHE_TTL_MS;
+
+    if (!forceRefresh && cacheFresh) {
+      startTransition(() => setDiscoveredAgents(agentDiscoveryCache?.agents ?? []));
+      return;
+    }
+
     setIsDiscovering(true);
+    const discoverSeq = ++discoverSeqRef.current;
+    const writeGeneration = ++agentDiscoveryWriteGeneration;
+    const promiseKey = JSON.stringify({
+      apiKeyPresent: cursorApiKeyPresent,
+      refreshShellEnv: forceRefresh,
+    });
     try {
-      const agents = await bridge.aiDiscoverAgents({
-        ...discoverOptions,
+      let discoveryPromise = agentDiscoveryPromises.get(promiseKey) ?? null;
+      if (!discoveryPromise) {
+        const sharedPromise = bridge.aiDiscoverAgents({
+          ...discoverOptions,
+          apiKeyPresent: cursorApiKeyPresent,
+        }).finally(() => {
+          if (agentDiscoveryPromises.get(promiseKey) === sharedPromise) {
+            agentDiscoveryPromises.delete(promiseKey);
+          }
+        });
+        agentDiscoveryPromises.set(promiseKey, sharedPromise);
+        discoveryPromise = sharedPromise;
+      }
+      const agents = await discoveryPromise;
+      if (
+        !mountedRef.current
+        || !enabledRef.current
+        || discoverSeq !== discoverSeqRef.current
+        || writeGeneration !== agentDiscoveryWriteGeneration
+      ) return;
+      agentDiscoveryCache = {
+        agents,
         apiKeyPresent: cursorApiKeyPresent,
-      });
-      setDiscoveredAgents(agents);
+        updatedAt: Date.now(),
+      };
+      startTransition(() => setDiscoveredAgents(agents));
     } catch (err) {
       console.error('Agent discovery failed:', err);
     } finally {
-      setIsDiscovering(false);
+      if (mountedRef.current && discoverSeq === discoverSeqRef.current) {
+        setIsDiscovering(false);
+      }
     }
   }, [cursorApiKeyPresent]);
+
+  useEffect(() => {
+    discoverSeqRef.current += 1;
+    if (!enabled) {
+      setIsDiscovering(false);
+    }
+  }, [cursorApiKeyPresent, enabled]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -68,6 +135,7 @@ export function useAgentDiscovery(
   // the canonical args from discovery change (e.g. after an app update).
   useEffect(() => {
     if (!setExternalAgents || discoveredAgents.length === 0) return;
+    if (!enabled) return;
 
     setExternalAgents((prev) => {
       let changed = false;
@@ -102,7 +170,7 @@ export function useAgentDiscovery(
       });
       return changed ? next : prev;
     });
-  }, [discoveredAgents, setExternalAgents]);
+  }, [discoveredAgents, enabled, setExternalAgents]);
 
   // Filter out agents that are already configured as external agents
   const unconfiguredAgents = discoveredAgents.filter(

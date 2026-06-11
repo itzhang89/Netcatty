@@ -23,7 +23,7 @@ function InspectList({ label, items }: { label: string; items: string[] }) {
   return (
     <div className="text-[10px] leading-relaxed">
       <div className="text-muted-foreground mb-0.5">{label}</div>
-      <div className="space-y-0.5 max-h-28 overflow-y-auto font-mono">
+      <div className="space-y-0.5 font-mono">
         {items.map((item, index) => (
           <div key={index} className="break-all text-foreground/90">{item}</div>
         ))}

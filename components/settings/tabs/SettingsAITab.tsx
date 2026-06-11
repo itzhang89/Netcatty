@@ -25,6 +25,7 @@ import { Select, SettingCard, SettingsSection, SettingsTabContent, SettingRow } 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../ui/tabs";
 import { AgentIconBadge } from "../../ai/AgentIconBadge";
 import { canSendWithAgent } from "../../ai/agentSendEligibility";
+import { notifyUserSkillsStatusChanged } from "../../ai/userSkillsStatusEvents";
 
 import type {
   AgentPathInfo,
@@ -274,6 +275,17 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const autoResolvedAgentStateRef = useRef<Partial<Record<ManagedAgentKey, "pending" | "done">>>({});
   const codexIntegrationLoadedRef = useRef(false);
   const userSkillsLoadedRef = useRef(false);
+  const mountedRef = useRef(true);
+  const agentPathRequestIdRef = useRef<Partial<Record<ManagedAgentKey, number>>>({});
+  const codexRequestIdRef = useRef(0);
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+    codexRequestIdRef.current += 1;
+    for (const key of ["codex", "claude", "copilot", "cursor", "codebuddy"] as ManagedAgentKey[]) {
+      agentPathRequestIdRef.current[key] = (agentPathRequestIdRef.current[key] ?? 0) + 1;
+    }
+  }, []);
 
   const applyResolvedAgentPath = useCallback((agentKey: ManagedAgentKey, result: AgentPathInfo | null) => {
     const setInfo = agentKey === "codex"
@@ -321,6 +333,12 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
             : setIsResolvingCodebuddy;
 
     setResolving(true);
+    const requestId = (agentPathRequestIdRef.current[agentKey] ?? 0) + 1;
+    agentPathRequestIdRef.current[agentKey] = requestId;
+    const isCurrentRequest = () => (
+      mountedRef.current
+      && agentPathRequestIdRef.current[agentKey] === requestId
+    );
     try {
       const result = await bridge.aiResolveCli({
         command: agentKey,
@@ -328,6 +346,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         refreshShellEnv: Boolean(options?.refreshShellEnv),
         ...(agentKey === "cursor" ? { apiKeyPresent: Boolean(options?.apiKeyPresent ?? cursorApiKeyEncrypted) } : {}),
       });
+      if (!isCurrentRequest()) return null;
       applyResolvedAgentPath(agentKey, result);
 
       return result;
@@ -335,7 +354,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
       console.error("Path resolution failed:", err);
       return null;
     } finally {
-      setResolving(false);
+      if (isCurrentRequest()) {
+        setResolving(false);
+      }
     }
   }, [applyResolvedAgentPath, cursorApiKeyEncrypted]);
 
@@ -476,15 +497,23 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     const bridge = getBridge();
     if (!bridge?.aiCodexGetIntegration) return;
 
+    const requestId = codexRequestIdRef.current + 1;
+    codexRequestIdRef.current = requestId;
+    const isCurrentRequest = () => mountedRef.current && codexRequestIdRef.current === requestId;
     setIsCodexLoading(true);
     setCodexError(null);
     try {
       const integration = await bridge.aiCodexGetIntegration(opts);
+      if (!isCurrentRequest()) return;
       setCodexIntegration(integration);
     } catch (err) {
-      setCodexError(normalizeCodexBridgeError(err));
+      if (isCurrentRequest()) {
+        setCodexError(normalizeCodexBridgeError(err));
+      }
     } finally {
-      setIsCodexLoading(false);
+      if (isCurrentRequest()) {
+        setIsCodexLoading(false);
+      }
     }
   }, []);
 
@@ -535,18 +564,26 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     const bridge = getBridge();
     if (!bridge?.aiCodexStartLogin) return;
 
+    const requestId = codexRequestIdRef.current + 1;
+    codexRequestIdRef.current = requestId;
+    const isCurrentRequest = () => mountedRef.current && codexRequestIdRef.current === requestId;
     setCodexError(null);
     setIsCodexLoading(true);
     try {
       const result = await bridge.aiCodexStartLogin();
+      if (!isCurrentRequest()) return;
       if (!result.ok || !result.session) {
         throw new Error(result.error || "Failed to start Codex login");
       }
       setCodexLoginSession(result.session);
     } catch (err) {
-      setCodexError(normalizeCodexBridgeError(err));
+      if (isCurrentRequest()) {
+        setCodexError(normalizeCodexBridgeError(err));
+      }
     } finally {
-      setIsCodexLoading(false);
+      if (isCurrentRequest()) {
+        setIsCodexLoading(false);
+      }
     }
   }, []);
 
@@ -578,19 +615,27 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     const bridge = getBridge();
     if (!bridge?.aiCodexLogout) return;
 
+    const requestId = codexRequestIdRef.current + 1;
+    codexRequestIdRef.current = requestId;
+    const isCurrentRequest = () => mountedRef.current && codexRequestIdRef.current === requestId;
     setCodexError(null);
     setIsCodexLoading(true);
     try {
       const result = await bridge.aiCodexLogout();
+      if (!isCurrentRequest()) return;
       if (!result.ok) {
         throw new Error(result.error || "Failed to log out from Codex");
       }
       setCodexLoginSession(null);
       await refreshCodexIntegration({ refreshShellEnv: true, validateChatGptAuth: true });
     } catch (err) {
-      setCodexError(normalizeCodexBridgeError(err));
+      if (isCurrentRequest()) {
+        setCodexError(normalizeCodexBridgeError(err));
+      }
     } finally {
-      setIsCodexLoading(false);
+      if (isCurrentRequest()) {
+        setIsCodexLoading(false);
+      }
     }
   }, [refreshCodexIntegration]);
 
@@ -608,6 +653,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     try {
       const result = await bridge.aiUserSkillsGetStatus();
       setUserSkillsStatus(result);
+      notifyUserSkillsStatusChanged();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setUserSkillsStatus({ ok: false, error: message });
@@ -642,6 +688,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     try {
       const result = await bridge.aiUserSkillsOpenFolder();
       setUserSkillsStatus(result);
+      notifyUserSkillsStatusChanged();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setUserSkillsStatus({ ok: false, error: message });

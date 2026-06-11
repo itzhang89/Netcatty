@@ -1,7 +1,7 @@
 import {
-  Gauge, LayoutList, Pause, Play, Skull, XCircle,
+  Gauge, LayoutList, Loader2, Pause, Play, Skull, XCircle,
 } from 'lucide-react';
-import React, { memo, useCallback, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import type { useSystemManagerBackend } from '../../application/state/useSystemManagerBackend';
 import {
@@ -38,6 +38,15 @@ type Backend = ReturnType<typeof useSystemManagerBackend>;
 type SortKey = 'cpuPercent' | 'memPercent' | 'pid' | 'command' | 'user';
 type ProcessFilter = 'all' | 'running';
 
+const PROCESS_INITIAL_RENDER_LIMIT = 60;
+const PROCESS_RENDER_CHUNK_SIZE = 80;
+const PROCESS_CACHE_TTL_MS = 30_000;
+
+const processListCache = new Map<string, {
+  processes: SystemProcessInfo[];
+  updatedAt: number;
+}>();
+
 const SORT_OPTIONS: Array<{ key: SortKey; labelKey: string }> = [
   { key: 'cpuPercent', labelKey: 'systemManager.processes.sort.cpu' },
   { key: 'memPercent', labelKey: 'systemManager.processes.sort.mem' },
@@ -61,6 +70,38 @@ const mergeProcesses = (
   next: SystemProcessInfo[],
 ) => mergePollListByKey(prev, next, (p) => p.pid, systemProcessInfoEqual);
 
+function getCachedProcesses(sessionId: string): SystemProcessInfo[] | null {
+  const cached = processListCache.get(sessionId);
+  if (!cached) return null;
+  if (Date.now() - cached.updatedAt > PROCESS_CACHE_TTL_MS) {
+    processListCache.delete(sessionId);
+    return null;
+  }
+  return cached.processes;
+}
+
+function scheduleProcessRenderTask(callback: () => void): () => void {
+  if (typeof window.requestIdleCallback === 'function') {
+    const id = window.requestIdleCallback(callback, { timeout: 400 });
+    return () => window.cancelIdleCallback(id);
+  }
+  const id = window.setTimeout(callback, 32);
+  return () => window.clearTimeout(id);
+}
+
+const ProcessListLoading = memo(function ProcessListLoading({
+  message,
+}: {
+  message: string;
+}) {
+  return (
+    <div className="flex min-h-[180px] flex-col items-center justify-center px-4 py-10 text-center text-xs text-muted-foreground">
+      <Loader2 size={18} className="mb-2 animate-spin opacity-70" />
+      <span>{message}</span>
+    </div>
+  );
+});
+
 interface ProcessRowProps {
   proc: SystemProcessInfo;
   selected: boolean;
@@ -79,55 +120,61 @@ const ProcessRow = memo(function ProcessRow({
   const { t } = useI18n();
   const { isStopped, isZombie } = getProcessFlags(proc);
 
+  const actions = (
+    <div className="flex w-[112px] shrink-0 items-center justify-end gap-1">
+      {!isStopped && !isZombie && (
+        <SystemPanelRoundButton
+          title={t('systemManager.processes.stop')}
+          onClick={() => onSignal(proc.pid, 'STOP')}
+        >
+          <Pause size={12} />
+        </SystemPanelRoundButton>
+      )}
+      {isStopped && !isZombie && (
+        <SystemPanelRoundButton
+          title={t('systemManager.processes.cont')}
+          onClick={() => onSignal(proc.pid, 'CONT')}
+        >
+          <Play size={12} />
+        </SystemPanelRoundButton>
+      )}
+      <SystemPanelRoundButton
+        title={t('systemManager.processes.term')}
+        onClick={() => onSignal(proc.pid, 'TERM')}
+      >
+        <XCircle size={12} />
+      </SystemPanelRoundButton>
+      <SystemPanelRoundButton
+        title={t('systemManager.processes.kill')}
+        destructive
+        onClick={() => onSignal(proc.pid, 'KILL')}
+      >
+        <Skull size={12} />
+      </SystemPanelRoundButton>
+      <SystemPanelRoundButton
+        title={t('systemManager.processes.renice')}
+        onClick={() => onRenice(proc.pid)}
+      >
+        <Gauge size={12} />
+      </SystemPanelRoundButton>
+    </div>
+  );
+
   return (
-    <>
+    <div>
       <SystemPanelRow
         selected={selected}
         onClick={() => onToggle(proc.pid)}
         title={proc.command}
         subtitle={`${proc.user || '—'} · PID ${proc.pid}`}
         trailing={(
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex w-[88px] shrink-0 items-center justify-end">
             <SystemPanelStatusBadge tone={getProcessTone(proc)}>
               {t(getProcessStatusLabelKey(proc))}
             </SystemPanelStatusBadge>
-            {!isStopped && !isZombie && (
-              <SystemPanelRoundButton
-                title={t('systemManager.processes.stop')}
-                onClick={() => onSignal(proc.pid, 'STOP')}
-              >
-                <Pause size={12} />
-              </SystemPanelRoundButton>
-            )}
-            {isStopped && !isZombie && (
-              <SystemPanelRoundButton
-                title={t('systemManager.processes.cont')}
-                onClick={() => onSignal(proc.pid, 'CONT')}
-              >
-                <Play size={12} />
-              </SystemPanelRoundButton>
-            )}
-            <SystemPanelRoundButton
-              title={t('systemManager.processes.term')}
-              onClick={() => onSignal(proc.pid, 'TERM')}
-            >
-              <XCircle size={12} />
-            </SystemPanelRoundButton>
-            <SystemPanelRoundButton
-              title={t('systemManager.processes.kill')}
-              destructive
-              onClick={() => onSignal(proc.pid, 'KILL')}
-            >
-              <Skull size={12} />
-            </SystemPanelRoundButton>
-            <SystemPanelRoundButton
-              title={t('systemManager.processes.renice')}
-              onClick={() => onRenice(proc.pid)}
-            >
-              <Gauge size={12} />
-            </SystemPanelRoundButton>
           </div>
         )}
+        actions={actions}
       />
       <SystemPanelCollapsible open={selected}>
         <SystemPanelDetailStrip>
@@ -144,7 +191,7 @@ const ProcessRow = memo(function ProcessRow({
           </div>
         </SystemPanelDetailStrip>
       </SystemPanelCollapsible>
-    </>
+    </div>
   );
 });
 
@@ -170,14 +217,54 @@ export const ProcessManagerTab = memo(function ProcessManagerTab({
   const [selectedPid, setSelectedPid] = useState<number | null>(null);
   const [reniceTarget, setReniceTarget] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [cachedProcesses, setCachedProcesses] = useState<SystemProcessInfo[] | null>(() => getCachedProcesses(sessionId));
+  const [cachedProcessesSessionId, setCachedProcessesSessionId] = useState(sessionId);
+  const [renderLimit, setRenderLimit] = useState(PROCESS_INITIAL_RENDER_LIMIT);
+  const [processListPending, setProcessListPending] = useState(false);
+  const processFetchGenerationRef = useRef(0);
+  const currentSessionIdRef = useRef(sessionId);
+
+  if (currentSessionIdRef.current !== sessionId) {
+    currentSessionIdRef.current = sessionId;
+    processFetchGenerationRef.current += 1;
+  }
+
+  useEffect(() => {
+    processFetchGenerationRef.current += 1;
+    setCachedProcesses(getCachedProcesses(sessionId));
+    setCachedProcessesSessionId(sessionId);
+    setRenderLimit(PROCESS_INITIAL_RENDER_LIMIT);
+    setProcessListPending(false);
+  }, [sessionId]);
+
+  useEffect(() => () => {
+    processFetchGenerationRef.current += 1;
+  }, []);
 
   const fetcher = useCallback(async () => {
-    const result = await backend.listSystemProcesses(sessionId);
-    if (result.pending) return null;
-    if (!result.success || !result.processes) {
-      throw new Error(result.error || stableT('systemManager.errors.loadProcesses'));
+    const fetchGeneration = processFetchGenerationRef.current;
+    const fetchSessionId = sessionId;
+    const isCurrentFetch = () => (
+      processFetchGenerationRef.current === fetchGeneration
+      && currentSessionIdRef.current === fetchSessionId
+    );
+    try {
+      const result = await backend.listSystemProcesses(sessionId);
+      if (!isCurrentFetch()) return null;
+      if (result.pending) {
+        setProcessListPending(true);
+        return null;
+      }
+      setProcessListPending(false);
+      if (!result.success || !result.processes) {
+        throw new Error(result.error || stableT('systemManager.errors.loadProcesses'));
+      }
+      return result.processes;
+    } catch (err) {
+      if (!isCurrentFetch()) return null;
+      setProcessListPending(false);
+      throw err;
     }
-    return result.processes;
   }, [backend, sessionId, stableT]);
 
   const intervalMs = Math.max(2, refreshIntervalSec) * 1000;
@@ -186,10 +273,24 @@ export const ProcessManagerTab = memo(function ProcessManagerTab({
     intervalMs,
     isVisible,
     mergeProcesses,
+    { resetKey: sessionId },
   );
 
-  const matched = useMemo(() => {
-    const list = processes ?? [];
+  useEffect(() => {
+    if (!processes) return;
+    processListCache.set(sessionId, { processes, updatedAt: Date.now() });
+    setCachedProcesses(processes);
+    setCachedProcessesSessionId(sessionId);
+  }, [processes, sessionId]);
+
+  const sessionCachedProcesses = cachedProcessesSessionId === sessionId
+    ? cachedProcesses
+    : getCachedProcesses(sessionId);
+  const visibleProcesses = processes ?? sessionCachedProcesses;
+  const showingCachedProcesses = processes === null && sessionCachedProcesses !== null;
+
+  const matched = useMemo<SystemProcessInfo[]>(() => {
+    const list = visibleProcesses ?? [];
     const q = query.trim().toLowerCase();
     return list.filter((p) => {
       if (filter === 'running' && !isProcessRunning(p.stat)) return false;
@@ -199,7 +300,7 @@ export const ProcessManagerTab = memo(function ProcessManagerTab({
         || p.user.toLowerCase().includes(q)
         || p.command.toLowerCase().includes(q);
     });
-  }, [processes, query, filter]);
+  }, [visibleProcesses, query, filter]);
 
   const compareProcesses = useCallback((a: SystemProcessInfo, b: SystemProcessInfo) => {
     let cmp = 0;
@@ -216,7 +317,32 @@ export const ProcessManagerTab = memo(function ProcessManagerTab({
   }, [sortAsc, sortKey]);
 
   const sortToken = `${sortKey}|${sortAsc}|${filter}|${query}`;
-  const displayList = useStableListOrder(matched, (p) => p.pid, sortToken, compareProcesses);
+  const displayList = useStableListOrder<SystemProcessInfo, number>(
+    matched,
+    (p) => p.pid,
+    sortToken,
+    compareProcesses,
+  );
+  const renderedList = useMemo(
+    () => displayList.slice(0, Math.min(renderLimit, displayList.length)),
+    [displayList, renderLimit],
+  );
+  const hasMoreRowsToRender = renderLimit < displayList.length;
+  const isProcessRefreshActive = loading || processListPending;
+  const showInitialLoading = isProcessRefreshActive && displayList.length === 0;
+  const showBlockingError = Boolean(error && !isProcessRefreshActive && displayList.length === 0);
+  const showInlineRefreshError = Boolean(error && !isProcessRefreshActive && displayList.length > 0);
+
+  useEffect(() => {
+    setRenderLimit(PROCESS_INITIAL_RENDER_LIMIT);
+  }, [sortToken]);
+
+  useEffect(() => {
+    if (!hasMoreRowsToRender) return undefined;
+    return scheduleProcessRenderTask(() => {
+      setRenderLimit((current) => Math.min(current + PROCESS_RENDER_CHUNK_SIZE, displayList.length));
+    });
+  }, [displayList.length, hasMoreRowsToRender, renderLimit]);
 
   const cycleSort = (key: SortKey) => {
     if (sortKey === key) setSortAsc((v) => !v);
@@ -265,7 +391,7 @@ export const ProcessManagerTab = memo(function ProcessManagerTab({
         trailing={(
           <SystemPanelRefreshButton
             title={t('history.action.refresh')}
-            loading={loading}
+            loading={isProcessRefreshActive}
             onClick={() => void refresh()}
           />
         )}
@@ -305,19 +431,26 @@ export const ProcessManagerTab = memo(function ProcessManagerTab({
           ))}
         </div>
       )}>
-        {t('systemManager.processes.meta', { count: String(displayList.length) })}
+        <span className={cn(showingCachedProcesses && isProcessRefreshActive && 'inline-flex items-center gap-1.5')}>
+          {showingCachedProcesses && isProcessRefreshActive && <Loader2 size={10} className="animate-spin" />}
+          {t('systemManager.processes.meta', { count: String(displayList.length) })}
+        </span>
       </SystemPanelMetaBar>
 
       {actionError && <SystemPanelInlineError message={actionError} />}
+      {showInlineRefreshError && error && <SystemPanelInlineError message={error} />}
 
       <SystemPanelList>
-        {error && (
+        {showBlockingError && error && (
           <SystemPanelError message={error} onRetry={() => void refresh()} retryLabel={t('history.action.retry')} loading={loading} />
         )}
-        {!error && displayList.length === 0 && !loading && (
+        {showInitialLoading && (
+          <ProcessListLoading message={t('systemManager.processes.loading')} />
+        )}
+        {!error && displayList.length === 0 && !loading && !showInitialLoading && (
           <SystemPanelEmpty icon={LayoutList} message={t('systemManager.empty')} />
         )}
-        {displayList.map((proc) => (
+        {renderedList.map((proc) => (
           <ProcessRow
             key={proc.pid}
             proc={proc}
@@ -327,6 +460,12 @@ export const ProcessManagerTab = memo(function ProcessManagerTab({
             onRenice={openRenicePrompt}
           />
         ))}
+        {hasMoreRowsToRender && (
+          <div className="flex items-center justify-center gap-1.5 border-b border-border/30 px-3 py-2 text-[10px] text-muted-foreground">
+            <Loader2 size={11} className="animate-spin" />
+            {t('systemManager.processes.loadingMore')}
+          </div>
+        )}
       </SystemPanelList>
 
       <SystemPanelPromptDialog

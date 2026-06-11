@@ -1,4 +1,4 @@
-import { Activity, Box, LayoutList, TerminalSquare } from 'lucide-react';
+import { Activity, Box, LayoutList, Loader2, TerminalSquare } from 'lucide-react';
 import React, { memo, useMemo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { useSystemManagerBackend } from '../../application/state/useSystemManagerBackend';
@@ -14,6 +14,19 @@ import { TmuxManagerTab } from './TmuxManagerTab';
 import { WorkspaceSidebarHostHeader } from '../terminalLayer/WorkspaceSidebarHostHeader';
 import { SystemPanelEmpty, SystemPanelShell } from './SystemPanelUi';
 import { useSessionCapabilities } from './hooks/useSystemManager';
+
+const SystemPanelChecking = memo(function SystemPanelChecking({
+  message,
+}: {
+  message: string;
+}) {
+  return (
+    <div className="flex h-full min-h-[180px] flex-col items-center justify-center px-4 py-10 text-center text-xs text-muted-foreground">
+      <Loader2 size={18} className="mb-2 animate-spin opacity-70" />
+      <span>{message}</span>
+    </div>
+  );
+});
 
 interface SystemManagerSidePanelProps {
   session: TerminalSession | null;
@@ -82,6 +95,8 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
   const dockerReady = capabilities?.hasDocker === true;
   const tmuxUnavailable = !probing && capabilities !== undefined && !tmuxReady;
   const dockerUnavailable = !probing && capabilities !== undefined && !dockerReady;
+  const tmuxChecking = resolvedTab === 'tmux' && !tmuxReady && !tmuxUnavailable;
+  const dockerChecking = resolvedTab === 'docker' && !dockerReady && !dockerUnavailable;
 
   return (
     <SystemPanelShell section="system-manager-panel">
@@ -106,42 +121,56 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col">
-        {resolvedTab === 'processes' && (
+        <div className={cn('flex-1 min-h-0 flex flex-col', resolvedTab !== 'processes' && 'hidden')}>
           <ProcessManagerTab
             sessionId={sessionId}
-            isVisible={isVisible}
+            isVisible={isVisible && resolvedTab === 'processes'}
             backend={backend}
             refreshIntervalSec={terminalSettings.systemManagerProcessRefreshInterval}
           />
-        )}
-        {resolvedTab === 'tmux' && (
-          tmuxUnavailable ? (
+        </div>
+        {tmuxUnavailable && resolvedTab === 'tmux' ? (
+          <div className="flex-1 min-h-0">
             <SystemPanelEmpty icon={TerminalSquare} message={t('systemManager.tmux.unavailable')} />
-          ) : (
+          </div>
+        ) : tmuxChecking ? (
+          <div className="flex-1 min-h-0">
+            <SystemPanelChecking message={t('systemManager.common.checkingAvailability')} />
+          </div>
+        ) : tmuxReady ? (
+          <div className={cn('flex-1 min-h-0 flex flex-col', resolvedTab !== 'tmux' && 'hidden')}>
             <TmuxManagerTab
               sessionId={sessionId}
               parentSession={session}
-              isVisible={isVisible && tmuxReady}
+              isVisible={isVisible && resolvedTab === 'tmux'}
+              warmupEnabled={isVisible && resolvedTab !== 'tmux'}
               backend={backend}
               refreshIntervalSec={terminalSettings.systemManagerTmuxRefreshInterval}
               snippets={snippets}
             />
-          )
-        )}
-        {resolvedTab === 'docker' && (
-          dockerUnavailable ? (
+          </div>
+        ) : null}
+        {dockerUnavailable && resolvedTab === 'docker' ? (
+          <div className="flex-1 min-h-0">
             <SystemPanelEmpty icon={Box} message={t('systemManager.docker.unavailable')} />
-          ) : (
+          </div>
+        ) : dockerChecking ? (
+          <div className="flex-1 min-h-0">
+            <SystemPanelChecking message={t('systemManager.common.checkingAvailability')} />
+          </div>
+        ) : dockerReady ? (
+          <div className={cn('flex-1 min-h-0 flex flex-col', resolvedTab !== 'docker' && 'hidden')}>
             <DockerManagerTab
               sessionId={sessionId}
               parentSession={session}
-              isVisible={isVisible && dockerReady}
+              isVisible={isVisible && resolvedTab === 'docker'}
+              warmupEnabled={isVisible && resolvedTab !== 'docker'}
               backend={backend}
               listRefreshIntervalSec={terminalSettings.systemManagerDockerListRefreshInterval}
               statsRefreshIntervalSec={terminalSettings.systemManagerDockerStatsRefreshInterval}
             />
-          )
-        )}
+          </div>
+        ) : null}
       </div>
     </SystemPanelShell>
   );

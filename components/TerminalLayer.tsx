@@ -3,6 +3,7 @@ import React, { memo, startTransition, useCallback, useEffect, useMemo, useRef, 
 import { activeTabStore } from '../application/state/activeTabStore';
 import { canReuseTerminalConnection } from '../application/state/terminalConnectionReuse';
 import { resolveTerminalSessionExitIntent, type TerminalSessionExitEvent } from '../application/state/resolveTerminalSessionExitIntent';
+import { prewarmAIStateStorageSnapshots } from '../application/state/aiStateSnapshots';
 import {
   getSessionActivityIdsToClear,
   getValidSessionActivityIds,
@@ -161,9 +162,23 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const cwdProbeCancelersRef = useRef<Map<string, () => void>>(new Map());
   const cwdProbeGenerationRef = useRef<Map<string, number>>(new Map());
 
+  useEffect(() => {
+    const runPrewarm = () => prewarmAIStateStorageSnapshots();
+    if (typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(runPrewarm, { timeout: 2500 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+    const timeoutId = window.setTimeout(runPrewarm, 500);
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
   const handleTerminalCwdChange = useCallback((sessionId: string, cwd: string | null) => {
-    if (cwd && cwd.trim().length > 0) {
-      terminalRendererCwdBySessionRef.current.set(sessionId, cwd);
+    const currentCwd = terminalRendererCwdBySessionRef.current.get(sessionId) ?? null;
+    const nextCwd = cwd && cwd.trim().length > 0 ? cwd : null;
+    if (currentCwd === nextCwd) return;
+
+    if (nextCwd) {
+      terminalRendererCwdBySessionRef.current.set(sessionId, nextCwd);
     } else {
       terminalRendererCwdBySessionRef.current.delete(sessionId);
     }

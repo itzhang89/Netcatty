@@ -1,5 +1,5 @@
-import { Layers, Tag, Trash2 } from 'lucide-react';
-import React, { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { Layers, Loader2, Tag, Trash2 } from 'lucide-react';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import type { useSystemManagerBackend } from '../../application/state/useSystemManagerBackend';
 import { dockerImageRowKey, type DockerImageInfo } from '../../domain/systemManager/types';
@@ -11,7 +11,9 @@ import {
   SystemPanelCollapsible,
   SystemPanelEmpty,
   SystemPanelError,
+  SystemPanelInlineError,
   SystemPanelList,
+  SystemPanelLoading,
   SystemPanelMetaBar,
   SystemPanelRefreshButton,
   SystemPanelRoundButton,
@@ -20,6 +22,7 @@ import {
   SystemPanelToolbar,
 } from './SystemPanelUi';
 import { SystemPanelPromptDialog } from './SystemPanelPromptDialog';
+import { useAsyncRecordCache } from './hooks/useAsyncRecordCache';
 import { usePolling, useStableTranslate } from './hooks/useSystemManager';
 import { showSystemManagerError } from './systemManagerToast';
 
@@ -28,6 +31,7 @@ type Backend = ReturnType<typeof useSystemManagerBackend>;
 interface DockerImagesPanelProps {
   sessionId: string;
   isVisible: boolean;
+  warmupEnabled?: boolean;
   backend: Backend;
   listRefreshIntervalSec: number;
 }
@@ -81,6 +85,7 @@ const DockerImageRow = memo(function DockerImageRow({
 export const DockerImagesPanel = memo(function DockerImagesPanel({
   sessionId,
   isVisible,
+  warmupEnabled = false,
   backend,
   listRefreshIntervalSec,
 }: DockerImagesPanelProps) {
@@ -88,8 +93,12 @@ export const DockerImagesPanel = memo(function DockerImagesPanel({
   const stableT = useStableTranslate();
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [inspect, setInspect] = useState<Record<string, unknown> | null>(null);
-  const inspectSeqRef = useRef(0);
+  const [tagTarget, setTagTarget] = useState<DockerImageInfo | null>(null);
+
+  useEffect(() => {
+    setSelectedId(null);
+    setTagTarget(null);
+  }, [sessionId]);
 
   const imagesFetcher = useCallback(async () => {
     const result = await backend.listDockerImages(sessionId);
@@ -103,8 +112,9 @@ export const DockerImagesPanel = memo(function DockerImagesPanel({
   const { data: images, error, loading, refresh } = usePolling<DockerImageInfo[]>(
     imagesFetcher,
     listIntervalMs,
-    isVisible,
+    isVisible || warmupEnabled,
     (prev, next) => mergePollListByKey(prev, next, dockerImageRowKey, dockerImageInfoEqual),
+    { poll: isVisible, resetKey: sessionId },
   );
 
   const filtered = useMemo(() => {
@@ -130,6 +140,33 @@ export const DockerImagesPanel = memo(function DockerImagesPanel({
   );
   const displayList = useStableListOrder(filtered, dockerImageRowKey, query, compareImages);
 
+  const getImageInspectKey = useCallback((image: DockerImageInfo) => (
+    `${sessionId}:${dockerImageRowKey(image)}`
+  ), [sessionId]);
+  const fetchImageInspect = useCallback(async (image: DockerImageInfo) => {
+    const result = await backend.dockerImageInspect({
+      sessionId,
+      imageId: image.id.slice(0, 12),
+    });
+    if (!result.success) {
+      throw new Error(result.error || stableT('systemManager.errors.actionFailed'));
+    }
+    return result.inspect ?? null;
+  }, [backend, sessionId, stableT]);
+  const {
+    records: inspectByImageKey,
+    loadRecord: loadImageInspect,
+    invalidateRecord: invalidateImageInspect,
+  } = useAsyncRecordCache<DockerImageInfo, Record<string, unknown>>({
+    items: images ?? [],
+    enabled: isVisible && (images?.length ?? 0) > 0,
+    getKey: getImageInspectKey,
+    fetchRecord: fetchImageInspect,
+    prefetchLimit: 24,
+    prefetchDelayMs: 40,
+    staleTimeMs: 20_000,
+  });
+
   const handleRemove = useCallback(async (image: DockerImageInfo) => {
     const label = image.name || image.id.slice(0, 12);
     const ok = window.confirm(t('systemManager.docker.confirmRemoveImage', { name: label }));
@@ -146,11 +183,10 @@ export const DockerImagesPanel = memo(function DockerImagesPanel({
     }
     if (selectedId === dockerImageRowKey(image)) {
       setSelectedId(null);
-      setInspect(null);
-      inspectSeqRef.current += 1;
     }
+    invalidateImageInspect(getImageInspectKey(image));
     await refresh();
-  }, [backend, refresh, selectedId, sessionId, t]);
+  }, [backend, getImageInspectKey, invalidateImageInspect, refresh, selectedId, sessionId, t]);
 
   const handlePrune = async (all: boolean) => {
     const ok = window.confirm(all
@@ -164,8 +200,6 @@ export const DockerImagesPanel = memo(function DockerImagesPanel({
     }
     await refresh();
   };
-
-  const [tagTarget, setTagTarget] = useState<DockerImageInfo | null>(null);
 
   const handleTagSubmit = async (image: DockerImageInfo, repository: string, tag: string) => {
     const result = await backend.dockerImageAction({
@@ -182,20 +216,13 @@ export const DockerImagesPanel = memo(function DockerImagesPanel({
     await refresh();
   };
 
-  const selectImage = useCallback(async (image: DockerImageInfo) => {
+  const selectImage = useCallback((image: DockerImageInfo) => {
     const rowKey = dockerImageRowKey(image);
     const next = selectedId === rowKey ? null : rowKey;
     setSelectedId(next);
-    setInspect(null);
-    const seq = ++inspectSeqRef.current;
     if (!next) return;
-    const result = await backend.dockerImageInspect({
-      sessionId,
-      imageId: image.id.slice(0, 12),
-    });
-    if (inspectSeqRef.current !== seq) return;
-    setInspect(result.success ? (result.inspect ?? null) : null);
-  }, [backend, selectedId, sessionId]);
+    void loadImageInspect(image, { force: true, urgent: true });
+  }, [loadImageInspect, selectedId]);
 
   const openTagDialog = useCallback((image: DockerImageInfo) => {
     setTagTarget(image);
@@ -243,12 +270,16 @@ export const DockerImagesPanel = memo(function DockerImagesPanel({
         {error && (
           <SystemPanelError message={error} onRetry={() => void refresh()} retryLabel={t('history.action.retry')} loading={loading} />
         )}
+        {!error && displayList.length === 0 && loading && (
+          <SystemPanelLoading message={t('systemManager.common.loading')} />
+        )}
         {!error && displayList.length === 0 && !loading && (
           <SystemPanelEmpty icon={Layers} message={t('systemManager.docker.imagesEmpty')} />
         )}
 
         {displayList.map((image) => {
           const rowKey = dockerImageRowKey(image);
+          const inspectKey = getImageInspectKey(image);
           const shortId = image.id.slice(0, 12);
           const displayName = image.repository && image.tag
             ? `${image.repository}:${image.tag}`
@@ -266,11 +297,20 @@ export const DockerImagesPanel = memo(function DockerImagesPanel({
                 onRemove={handleRemove}
               />
               <SystemPanelCollapsible open={selected}>
-                {inspect && (
+                {inspectByImageKey[inspectKey]?.loading && !inspectByImageKey[inspectKey]?.data && (
+                  <div className="flex items-center gap-1.5 border-b border-border/40 bg-muted/20 px-3 py-2 text-[10px] text-muted-foreground">
+                    <Loader2 size={11} className="animate-spin" />
+                    {t('systemManager.common.loadingDetails')}
+                  </div>
+                )}
+                {inspectByImageKey[inspectKey]?.error && !inspectByImageKey[inspectKey]?.data && (
+                  <SystemPanelInlineError message={inspectByImageKey[inspectKey].error} />
+                )}
+                {inspectByImageKey[inspectKey]?.data && (
                   <DockerInspectView
                     kind="image"
-                    data={inspect}
-                    onClose={() => { setSelectedId(null); setInspect(null); }}
+                    data={inspectByImageKey[inspectKey].data}
+                    onClose={() => { setSelectedId(null); }}
                   />
                 )}
               </SystemPanelCollapsible>
