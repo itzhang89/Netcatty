@@ -71,7 +71,7 @@ export const Select: React.FC<SelectProps> = ({
       </SelectPrimitive.Trigger>
       <SelectPrimitive.Portal>
         <SelectPrimitive.Content
-          className="z-[200000] max-h-80 w-max max-w-[var(--radix-select-content-available-width)] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1"
+          className="z-[200000] max-h-80 w-max max-w-[min(24rem,var(--radix-select-content-available-width))] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1"
           position="popper"
           sideOffset={4}
           style={{ minWidth: "max(12rem, var(--radix-select-trigger-width))" }}
@@ -84,7 +84,7 @@ export const Select: React.FC<SelectProps> = ({
               <SelectPrimitive.Item
                 key={opt.value}
                 value={opt.value}
-                className="relative flex w-full min-w-max cursor-default select-none items-center whitespace-nowrap rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                className="relative flex w-full min-w-0 cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
               >
                 <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
                   <SelectPrimitive.ItemIndicator>
@@ -92,7 +92,7 @@ export const Select: React.FC<SelectProps> = ({
                   </SelectPrimitive.ItemIndicator>
                 </span>
                 <SelectPrimitive.ItemText>
-                  <span className="flex items-center gap-2 whitespace-nowrap">
+                  <span className="flex min-w-0 items-center gap-2 whitespace-normal break-words leading-snug">
                     {opt.icon}
                     {opt.label}
                   </span>
