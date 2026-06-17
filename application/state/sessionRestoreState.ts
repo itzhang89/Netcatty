@@ -68,6 +68,38 @@ export function buildPersistableSessionRestorePayload({
   });
 }
 
+export function buildAndWriteSessionRestorePayload({
+  sessions,
+  workspaces,
+  tabOrder,
+  activeTabId,
+  now,
+  storage,
+}: {
+  sessions: TerminalSession[];
+  workspaces: Workspace[];
+  tabOrder: string[];
+  activeTabId: string;
+  now?: number;
+  storage: {
+    write(payload: SessionRestorePayload): boolean;
+    clear(): void;
+  };
+}): boolean {
+  const payload = buildPersistableSessionRestorePayload({
+    sessions,
+    workspaces,
+    tabOrder,
+    activeTabId,
+    now,
+  });
+  if (!payload) {
+    storage.clear();
+    return false;
+  }
+  return storage.write(payload);
+}
+
 export function mergeSessionRestoreCwd(
   payload: SessionRestorePayload,
   sessionId: string,

@@ -47,6 +47,10 @@ import { resolveSidePanelToggleIntent } from '../application/state/resolveSidePa
 import { resolveAiSidePanelToggleIntent } from '../application/state/resolveAiSidePanelToggleIntent';
 import { terminalLayerAreEqual } from './terminalLayerMemo';
 import { TerminalLayerTabBridge } from './terminalLayer/TerminalLayerTabBridge';
+import {
+  canUseDirectSessionWriteFallback,
+  resolveFallbackSessionProtocol,
+} from './terminalLayer/terminalLayerSessionRouting';
 import { resolvePreferredTerminalCwd, scheduleBackendCwdProbeAfterCommand } from './terminal/sftpCwd';
 import { classifyDistroId, shouldProbeSessionCwd } from '../domain/host';
 
@@ -321,6 +325,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
     for (const session of sessionsRef.current) {
       if (session.workspaceId === workspaceId && session.id !== sourceSessionId) {
+        if (!canUseDirectSessionWriteFallback(session)) continue;
         terminalBackend.writeToSession(session.id, data);
       }
     }
@@ -536,7 +541,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         map.set(session.id, applySessionFontSizeToHost(hostForSession, session));
       } else {
         // Create stable fallback host object
-        const fallbackProtocol = session.protocol ?? 'local' as const;
+        const fallbackProtocol = resolveFallbackSessionProtocol(session);
         const fallbackHost: Host = {
           id: session.hostId,
           label: session.hostLabel || 'Local Terminal',
@@ -996,6 +1001,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       return;
     }
 
+    const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
+    if (!session || !canUseDirectSessionWriteFallback(session)) return;
+
     let data = normalizeLineEndings(command);
     if (!noAutoRun) data = `${data}\r`;
     terminalBackend.writeToSession(sessionId, data);
@@ -1037,6 +1045,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         if (executor) {
           executor(text, false, { broadcast: false });
         } else {
+          const session = sessionsRef.current.find((candidate) => candidate.id === sid);
+          if (!session || !canUseDirectSessionWriteFallback(session)) continue;
           terminalBackend.writeToSession(sid, payload);
         }
       }
@@ -1051,6 +1061,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         if (executor) {
           executor(text, false);
         } else {
+          const session = sessionsRef.current.find((candidate) => candidate.id === targetId);
+          if (!session || !canUseDirectSessionWriteFallback(session)) return;
           terminalBackend.writeToSession(targetId, payload);
         }
       }

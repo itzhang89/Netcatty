@@ -64,6 +64,41 @@ test("buildSessionRestorePayload only stores allowlisted session fields", () => 
   ].sort());
 });
 
+test("buildSessionRestorePayload deeply allowlists serial config fields", () => {
+  const payload = buildSessionRestorePayload({
+    sessions: [{
+      ...session("s1"),
+      protocol: "serial",
+      serialConfig: {
+        path: "/dev/tty.usbserial",
+        baudRate: 115200,
+        dataBits: 8,
+        stopBits: 1,
+        parity: "none",
+        flowControl: "none",
+        localEcho: true,
+        lineMode: true,
+        password: "do-not-store",
+      },
+    } as TerminalSession & { serialConfig: TerminalSession["serialConfig"] & { password: string } }],
+    workspaces: [],
+    tabOrder: ["s1"],
+    activeTabId: "s1",
+    now: 123,
+  });
+
+  assert.deepEqual(payload.sessions[0].serialConfig, {
+    path: "/dev/tty.usbserial",
+    baudRate: 115200,
+    dataBits: 8,
+    stopBits: 1,
+    parity: "none",
+    flowControl: "none",
+    localEcho: true,
+    lineMode: true,
+  });
+});
+
 test("buildSessionRestorePayload drops startup commands from restored sessions", () => {
   const payload = buildSessionRestorePayload({
     sessions: [{
@@ -179,8 +214,126 @@ test("sanitizeSessionRestorePayload enforces workspace session ownership", () =>
   assert.deepEqual(sanitized.tabOrder, ["ws-1", "standalone", "ws-2"]);
 });
 
+test("sanitizeSessionRestorePayload allowlists workspace node fields", () => {
+  const sanitized = sanitizeSessionRestorePayload({
+    version: 1,
+    savedAt: 1,
+    activeTabId: "ws-1",
+    tabOrder: ["ws-1"],
+    sessions: [session("s1", "ws-1"), session("s2", "ws-1")],
+    workspaces: [{
+      id: "ws-1",
+      title: "Workspace",
+      root: {
+        id: "split-1",
+        type: "split",
+        direction: "horizontal",
+        terminalData: "do-not-store",
+        children: [
+          { id: "pane-1", type: "pane", sessionId: "s1", terminalData: "do-not-store" },
+          { id: "pane-2", type: "pane", sessionId: "s2", secret: "do-not-store" },
+        ],
+        sizes: [0.4, 0.6],
+      },
+    }],
+  });
+
+  const root = sanitized.workspaces[0].root;
+  assert.equal("terminalData" in root, false);
+  assert.equal(root.type, "split");
+  assert.equal("terminalData" in root.children[0], false);
+  assert.equal("secret" in root.children[1], false);
+});
+
+test("sanitizeSessionRestorePayload deeply allowlists unknown serial config fields", () => {
+  const sanitized = sanitizeSessionRestorePayload({
+    version: 1,
+    savedAt: 1,
+    activeTabId: "s1",
+    tabOrder: ["s1"],
+    sessions: [{
+      ...session("s1"),
+      protocol: "serial",
+      serialConfig: {
+        path: "/dev/tty.usbserial",
+        baudRate: 115200,
+        dataBits: 8,
+        stopBits: 1,
+        parity: "none",
+        flowControl: "none",
+        localEcho: true,
+        lineMode: true,
+        secret: "do-not-store",
+      },
+    }],
+    workspaces: [],
+  });
+
+  assert.deepEqual(sanitized.sessions[0].serialConfig, {
+    path: "/dev/tty.usbserial",
+    baudRate: 115200,
+    dataBits: 8,
+    stopBits: 1,
+    parity: "none",
+    flowControl: "none",
+    localEcho: true,
+    lineMode: true,
+  });
+});
+
+test("sanitizeSessionRestorePayload drops invalid protocol and shell type enum values", () => {
+  const sanitized = sanitizeSessionRestorePayload({
+    version: 1,
+    savedAt: 1,
+    activeTabId: "s1",
+    tabOrder: ["s1"],
+    sessions: [{
+      ...session("s1"),
+      protocol: "ftp",
+      shellType: "bash",
+    }],
+    workspaces: [],
+  });
+
+  assert.equal(sanitized.sessions[0].protocol, undefined);
+  assert.equal(sanitized.sessions[0].shellType, undefined);
+});
+
+test("sanitizeSessionRestorePayload falls back to equal split sizes when saved sizes are non-positive", () => {
+  const sanitized = sanitizeSessionRestorePayload({
+    version: 1,
+    savedAt: 1,
+    activeTabId: "ws-1",
+    tabOrder: ["ws-1"],
+    sessions: [session("s1", "ws-1"), session("s2", "ws-1")],
+    workspaces: [{
+      id: "ws-1",
+      title: "Workspace",
+      root: {
+        id: "split-1",
+        type: "split",
+        direction: "horizontal",
+        children: [
+          { id: "pane-1", type: "pane", sessionId: "s1" },
+          { id: "pane-2", type: "pane", sessionId: "s2" },
+        ],
+        sizes: [-1, 2],
+      },
+    }],
+  });
+
+  assert.equal(sanitized.workspaces[0].root.type, "split");
+  if (sanitized.workspaces[0].root.type === "split") {
+    assert.deepEqual(sanitized.workspaces[0].root.sizes, [0.5, 0.5]);
+  }
+});
+
 test("resolveRestoredActiveTabId falls back to vault when no restored tab is valid", () => {
   assert.equal(resolveRestoredActiveTabId("missing", [], [], []), "vault");
+});
+
+test("resolveRestoredActiveTabId does not restore sftp as an active startup tab", () => {
+  assert.equal(resolveRestoredActiveTabId("sftp", ["sftp"], [], []), "vault");
 });
 
 test("isRestoredDisconnectedSession detects only explicit restored sessions", () => {

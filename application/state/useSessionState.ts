@@ -32,7 +32,7 @@ import { STORAGE_KEY_RESTORE_PREVIOUS_SESSION } from '../../infrastructure/confi
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { sessionRestoreStorage } from './sessionRestoreStorage';
 import {
-  buildPersistableSessionRestorePayload,
+  buildAndWriteSessionRestorePayload,
   createInitialRestoredSessionState,
   updateRestoredSessionStatusState,
   updateSessionRestoreCwdState,
@@ -69,6 +69,10 @@ export const useSessionState = () => {
   // Log views: stores open log replay tabs
   const [logViews, setLogViews] = useState<LogView[]>([]);
   const [activeTabRevision, setActiveTabRevision] = useState(0);
+  const sessionsRef = useRef(sessions);
+  const tabOrderRef = useRef(tabOrder);
+  sessionsRef.current = sessions;
+  tabOrderRef.current = tabOrder;
 
   useEffect(() => {
     if (initialRestoreState.activeTabId !== 'vault') {
@@ -81,28 +85,41 @@ export const useSessionState = () => {
   }), []);
 
   useEffect(() => {
-    if (!resolveRestorePreviousSessionSetting(
+    const restoreEnabled = resolveRestorePreviousSessionSetting(
       localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION),
-    )) {
+    );
+    if (!restoreEnabled) {
       sessionRestoreStorage.clear();
       return;
     }
 
-    const timeout = window.setTimeout(() => {
-      const payload = buildPersistableSessionRestorePayload({
-        sessions,
-        workspaces,
-        tabOrder,
+    const persistNow = () => {
+      buildAndWriteSessionRestorePayload({
+        sessions: sessionsRef.current,
+        workspaces: workspacesRef.current,
+        tabOrder: tabOrderRef.current,
         activeTabId: activeTabStore.getActiveTabId(),
+        storage: sessionRestoreStorage,
       });
-      if (payload) {
-        sessionRestoreStorage.write(payload);
-      } else {
-        sessionRestoreStorage.clear();
-      }
+    };
+
+    const timeout = window.setTimeout(() => {
+      persistNow();
     }, 250);
 
-    return () => window.clearTimeout(timeout);
+    const handlePageHide = () => {
+      window.clearTimeout(timeout);
+      persistNow();
+    };
+
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("beforeunload", handlePageHide);
+
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("beforeunload", handlePageHide);
+    };
   }, [sessions, workspaces, tabOrder, activeTabRevision]);
 
   const updateSessionRestoreCwd = useCallback((sessionId: string, cwd: string | null) => {

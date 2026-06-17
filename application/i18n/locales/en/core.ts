@@ -150,6 +150,10 @@ export const enCoreMessages: Messages = {
   'settings.sessionRestore.restorePreviousSessionDesc': 'Reopen terminal tabs and workspace layouts from the last app session.',
   'settings.sessionRestore.restoreTerminalCwd': 'Restore terminal working directory',
   'settings.sessionRestore.restoreTerminalCwdDesc': 'When reconnecting a restored terminal, try to return to its last known directory without blocking the connection.',
+  'terminal.restore.placeholder.title': 'Restored session',
+  'terminal.restore.placeholder.desc': 'This terminal is disconnected. Reconnect when you are ready to start a new shell for this tab.',
+  'terminal.restore.placeholder.reconnect': 'Reconnect',
+  'terminal.restore.cwdLog': 'Restoring working directory: {cwd}',
 
   // Settings > Session Logs
   'settings.sessionLogs.title': 'Session Logs',

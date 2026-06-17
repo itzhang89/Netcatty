@@ -75,31 +75,67 @@ const readNumber = (record: Record<string, unknown>, key: string): number | unde
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 };
 
-const restoreSession = (session: TerminalSession): RestoredTerminalSession => ({
-  id: session.id,
-  hostId: session.hostId,
-  hostLabel: session.hostLabel,
-  hostname: session.hostname,
-  username: session.username,
-  ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
-  ...(session.protocol ? { protocol: session.protocol } : {}),
-  ...(session.port !== undefined ? { port: session.port } : {}),
-  ...(session.moshEnabled !== undefined ? { moshEnabled: session.moshEnabled } : {}),
-  ...(session.etEnabled !== undefined ? { etEnabled: session.etEnabled } : {}),
-  ...(session.shellType ? { shellType: session.shellType } : {}),
-  ...(session.charset ? { charset: session.charset } : {}),
-  ...(session.serialConfig ? { serialConfig: session.serialConfig } : {}),
-  ...(session.localShell ? { localShell: session.localShell } : {}),
-  ...(session.localShellArgs ? { localShellArgs: [...session.localShellArgs] } : {}),
-  ...(session.localShellName ? { localShellName: session.localShellName } : {}),
-  ...(session.localShellIcon ? { localShellIcon: session.localShellIcon } : {}),
-  ...(session.fontSize !== undefined ? { fontSize: session.fontSize } : {}),
-  ...(session.fontSizeOverride !== undefined ? { fontSizeOverride: session.fontSizeOverride } : {}),
-  ...(session.customName ? { customName: session.customName } : {}),
-  ...(session.lastCwd ? { lastCwd: session.lastCwd } : {}),
-  status: "disconnected",
-  restoreState: "restored-disconnected",
-});
+const isOneOf = <T extends string | number>(
+  value: unknown,
+  allowed: readonly T[],
+): value is T => allowed.includes(value as T);
+
+const sanitizeProtocol = (value: unknown): TerminalSession["protocol"] | undefined => (
+  isOneOf(value, ["ssh", "telnet", "local", "serial"] as const) ? value : undefined
+);
+
+const sanitizeShellType = (value: unknown): TerminalSession["shellType"] | undefined => (
+  isOneOf(value, ["posix", "fish", "powershell", "cmd", "unknown"] as const) ? value : undefined
+);
+
+const sanitizeSerialConfig = (value: unknown): SerialConfig | undefined => {
+  if (!isRecord(value)) return undefined;
+  const path = readString(value, "path");
+  const baudRate = readNumber(value, "baudRate");
+  if (!path || baudRate === undefined) return undefined;
+
+  return {
+    path,
+    baudRate,
+    ...(isOneOf(value.dataBits, [5, 6, 7, 8] as const) ? { dataBits: value.dataBits } : {}),
+    ...(isOneOf(value.stopBits, [1, 1.5, 2] as const) ? { stopBits: value.stopBits } : {}),
+    ...(isOneOf(value.parity, ["none", "even", "odd", "mark", "space"] as const) ? { parity: value.parity } : {}),
+    ...(isOneOf(value.flowControl, ["none", "xon/xoff", "rts/cts"] as const) ? { flowControl: value.flowControl } : {}),
+    ...(readBoolean(value, "localEcho") !== undefined ? { localEcho: readBoolean(value, "localEcho") } : {}),
+    ...(readBoolean(value, "lineMode") !== undefined ? { lineMode: readBoolean(value, "lineMode") } : {}),
+  };
+};
+
+const restoreSession = (session: TerminalSession): RestoredTerminalSession => {
+  const serialConfig = sanitizeSerialConfig(session.serialConfig);
+  const protocol = sanitizeProtocol(session.protocol);
+  const shellType = sanitizeShellType(session.shellType);
+  return {
+    id: session.id,
+    hostId: session.hostId,
+    hostLabel: session.hostLabel,
+    hostname: session.hostname,
+    username: session.username,
+    ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
+    ...(protocol ? { protocol } : {}),
+    ...(session.port !== undefined ? { port: session.port } : {}),
+    ...(session.moshEnabled !== undefined ? { moshEnabled: session.moshEnabled } : {}),
+    ...(session.etEnabled !== undefined ? { etEnabled: session.etEnabled } : {}),
+    ...(shellType ? { shellType } : {}),
+    ...(session.charset ? { charset: session.charset } : {}),
+    ...(serialConfig ? { serialConfig } : {}),
+    ...(session.localShell ? { localShell: session.localShell } : {}),
+    ...(session.localShellArgs ? { localShellArgs: [...session.localShellArgs] } : {}),
+    ...(session.localShellName ? { localShellName: session.localShellName } : {}),
+    ...(session.localShellIcon ? { localShellIcon: session.localShellIcon } : {}),
+    ...(session.fontSize !== undefined ? { fontSize: session.fontSize } : {}),
+    ...(session.fontSizeOverride !== undefined ? { fontSizeOverride: session.fontSizeOverride } : {}),
+    ...(session.customName ? { customName: session.customName } : {}),
+    ...(session.lastCwd ? { lastCwd: session.lastCwd } : {}),
+    status: "disconnected",
+    restoreState: "restored-disconnected",
+  };
+};
 
 const restoreSessionFromUnknown = (value: unknown): RestoredTerminalSession | null => {
   if (!isRecord(value)) return null;
@@ -110,6 +146,9 @@ const restoreSessionFromUnknown = (value: unknown): RestoredTerminalSession | nu
   const username = readString(value, "username");
   if (!id || !hostId || !hostLabel || !hostname || !username) return null;
 
+  const serialConfig = sanitizeSerialConfig(value.serialConfig);
+  const protocol = sanitizeProtocol(value.protocol);
+  const shellType = sanitizeShellType(value.shellType);
   return {
     id,
     hostId,
@@ -117,13 +156,13 @@ const restoreSessionFromUnknown = (value: unknown): RestoredTerminalSession | nu
     hostname,
     username,
     ...(readString(value, "workspaceId") ? { workspaceId: readString(value, "workspaceId") } : {}),
-    ...(readString(value, "protocol") ? { protocol: readString(value, "protocol") as TerminalSession["protocol"] } : {}),
+    ...(protocol ? { protocol } : {}),
     ...(readNumber(value, "port") !== undefined ? { port: readNumber(value, "port") } : {}),
     ...(readBoolean(value, "moshEnabled") !== undefined ? { moshEnabled: readBoolean(value, "moshEnabled") } : {}),
     ...(readBoolean(value, "etEnabled") !== undefined ? { etEnabled: readBoolean(value, "etEnabled") } : {}),
-    ...(readString(value, "shellType") ? { shellType: readString(value, "shellType") as TerminalSession["shellType"] } : {}),
+    ...(shellType ? { shellType } : {}),
     ...(readString(value, "charset") ? { charset: readString(value, "charset") } : {}),
-    ...(isRecord(value.serialConfig) ? { serialConfig: value.serialConfig as SerialConfig } : {}),
+    ...(serialConfig ? { serialConfig } : {}),
     ...(readString(value, "localShell") ? { localShell: readString(value, "localShell") } : {}),
     ...(Array.isArray(value.localShellArgs) ? { localShellArgs: value.localShellArgs.filter((arg): arg is string => typeof arg === "string") } : {}),
     ...(readString(value, "localShellName") ? { localShellName: readString(value, "localShellName") } : {}),
@@ -204,7 +243,9 @@ const pruneNode = (node: unknown, validSessionIds: ReadonlySet<string>): Workspa
   if (!isRecord(node)) return null;
   if (node.type === "pane") {
     if (typeof node.id !== "string" || typeof node.sessionId !== "string") return null;
-    return validSessionIds.has(node.sessionId) ? node : null;
+    return validSessionIds.has(node.sessionId)
+      ? { id: node.id, type: "pane", sessionId: node.sessionId }
+      : null;
   }
 
   if (node.type !== "split" || typeof node.id !== "string" || (node.direction !== "horizontal" && node.direction !== "vertical") || !Array.isArray(node.children)) {
@@ -218,17 +259,21 @@ const pruneNode = (node: unknown, validSessionIds: ReadonlySet<string>): Workspa
   if (children.length === 0) return null;
   if (children.length === 1) return children[0];
 
-  const sizes = Array.isArray(node.sizes) ? node.sizes.filter((size): size is number => typeof size === "number" && Number.isFinite(size)) : undefined;
-  const nextSizes = sizes && sizes.length === node.children.length
+  const rawSizes = Array.isArray(node.sizes) ? node.sizes : undefined;
+  const canReuseSizes = rawSizes?.length === node.children.length
+    && rawSizes.every((size) => typeof size === "number" && Number.isFinite(size) && size > 0);
+  const nextSizes = canReuseSizes
     ? children.map((child) => {
         const originalIndex = node.children.findIndex((original) => original.id === child.id);
-        return originalIndex >= 0 ? sizes[originalIndex] ?? 0 : 0;
+        return originalIndex >= 0 && typeof rawSizes[originalIndex] === "number" ? rawSizes[originalIndex] : 0;
       })
     : children.map(() => 1 / children.length);
   const total = nextSizes.reduce((sum, size) => sum + size, 0);
 
   return {
-    ...node,
+    id: node.id,
+    type: "split",
+    direction: node.direction,
     children,
     sizes: total > 0 ? nextSizes.map((size) => size / total) : children.map(() => 1 / children.length),
   };
@@ -239,6 +284,21 @@ const collectNodeSessionIds = (node: WorkspaceNode): string[] => {
   return node.children.flatMap(collectNodeSessionIds);
 };
 
+const restoreWorkspace = (workspace: Workspace, root: WorkspaceNode, sessionIds: readonly string[]): Workspace => {
+  const sessionIdSet = new Set(sessionIds);
+  return {
+    id: workspace.id,
+    title: workspace.title,
+    root,
+    ...(workspace.viewMode === "focus" || workspace.viewMode === "split" ? { viewMode: workspace.viewMode } : {}),
+    focusedSessionId: workspace.focusedSessionId && sessionIdSet.has(workspace.focusedSessionId)
+      ? workspace.focusedSessionId
+      : sessionIds[0],
+    focusSessionOrder: uniqueStrings(workspace.focusSessionOrder ?? []).filter((id) => sessionIdSet.has(id)),
+    ...(workspace.snippetId ? { snippetId: workspace.snippetId } : {}),
+  };
+};
+
 export function resolveRestoredActiveTabId(
   activeTabId: string,
   tabOrder: readonly string[],
@@ -247,7 +307,6 @@ export function resolveRestoredActiveTabId(
 ): string {
   const valid = new Set([
     "vault",
-    "sftp",
     ...sessions.filter((session) => !session.workspaceId).map((session) => session.id),
     ...workspaces.map((workspace) => workspace.id),
   ]);
@@ -282,15 +341,7 @@ export function sanitizeSessionRestorePayload(payload: unknown): SessionRestoreP
     const root = pruneNode(workspace.root, workspaceSessionIds);
     if (!root) continue;
     const sessionIds = collectNodeSessionIds(root);
-    const sessionIdSet = new Set(sessionIds);
-    workspaces.push({
-      ...workspace,
-      root,
-      focusedSessionId: workspace.focusedSessionId && sessionIdSet.has(workspace.focusedSessionId)
-        ? workspace.focusedSessionId
-        : sessionIds[0],
-      focusSessionOrder: uniqueStrings(workspace.focusSessionOrder ?? []).filter((id) => sessionIdSet.has(id)),
-    });
+    workspaces.push(restoreWorkspace(workspace, root, sessionIds));
   }
 
   const validWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id));

@@ -46,7 +46,7 @@ test("manual reconnect captures restore cwd intent before clearing restored stat
   const refIndex = source.indexOf("const restoreCwdIntentRef = useRef");
   const contextIndex = source.indexOf("restoreCwdIntentRef,");
   const captureIndex = source.indexOf("restoreCwdIntentRef.current = resolveRestoreCwdIntent");
-  const connectingIndex = source.indexOf('setStatus("connecting")');
+  const connectingIndex = source.indexOf('updateStatus("connecting")');
 
   assert.notEqual(importIndex, -1);
   assert.notEqual(refIndex, -1);

@@ -57,6 +57,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     const intent = ctx.restoreCwdIntentRef?.current;
     if (!intent) return;
     ctx.restoreCwdIntentRef.current = null;
+    ctx.setProgressLogs((prev) => [...prev, tr("terminal.restore.cwdLog", `Restoring working directory: ${intent.cwd}`)
+      .replace("{cwd}", intent.cwd)]);
     ctx.terminalBackend.writeToSession(id, `${intent.command}\r`, { automated: true });
     markPromptLineBreakCommandPending(ctx.promptLineBreakStateRef, term, intent.command);
   };

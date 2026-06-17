@@ -656,6 +656,7 @@ test("local session runs startup command after attaching", async () => {
 test("local session restores cwd before startup command after attaching", async () => {
   const sessionWrites: Array<{ id: string; data: string; automated?: boolean }> = [];
   const executedCommands: string[] = [];
+  const progressLogs: string[] = [];
 
   const terminalBackend = {
     backendAvailable: () => true,
@@ -695,6 +696,9 @@ test("local session restores cwd before startup command after attaching", async 
     startupCommand: "pwd",
     promptLineBreakStateRef: undefined,
     restoreCwdIntentRef,
+    setProgressLogs: (updater: (prev: string[]) => string[]) => {
+      progressLogs.splice(0, progressLogs.length, ...updater(progressLogs));
+    },
     onCommandExecuted: (command: string) => {
       executedCommands.push(command);
     },
@@ -709,11 +713,13 @@ test("local session restores cwd before startup command after attaching", async 
     { id: "local-session", data: "pwd\r", automated: true },
   ]);
   assert.deepEqual(executedCommands, ["pwd"]);
+  assert.deepEqual(progressLogs, ["Restoring working directory: /srv/app dir"]);
 });
 
 test("ssh session restores cwd before startup command after attaching", async () => {
   const sessionWrites: Array<{ id: string; data: string; automated?: boolean }> = [];
   const executedCommands: string[] = [];
+  const progressLogs: string[] = [];
 
   const terminalBackend = {
     backendAvailable: () => true,
@@ -746,6 +752,9 @@ test("ssh session restores cwd before startup command after attaching", async ()
     startupCommand: "pwd",
     promptLineBreakStateRef: undefined,
     restoreCwdIntentRef,
+    setProgressLogs: (updater: (prev: string[]) => string[]) => {
+      progressLogs.splice(0, progressLogs.length, ...updater(progressLogs));
+    },
     onCommandExecuted: (command: string) => {
       executedCommands.push(command);
     },
@@ -760,6 +769,7 @@ test("ssh session restores cwd before startup command after attaching", async ()
     { id: "ssh-session", data: "pwd\r", automated: true },
   ]);
   assert.deepEqual(executedCommands, ["pwd"]);
+  assert.deepEqual(progressLogs, ["Restoring working directory: /srv/app dir"]);
 });
 
 test("local session resets terminal timestamp state when reusing a terminal", async () => {
