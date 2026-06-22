@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useActiveTabId, useIsSftpActive, useIsVaultActive } from '../state/activeTabStore';
 import { useTerminalHostTreeLayoutWidth } from '../state/terminalHostTreeStore';
 import { isTerminalContentTabSurface } from './workTabSurface';
@@ -9,14 +9,47 @@ import type { SftpView as SftpViewComponent } from '../../components/SftpView';
 import type { TerminalLayer as TerminalLayerComponent } from '../../components/TerminalLayer';
 
 // Visibility container for VaultView - isolates isActive subscription
-export const VaultViewContainer: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const VaultViewContainer: React.FC<{
+  children: React.ReactNode;
+  appThemeStyle?: React.CSSProperties;
+}> = ({ children, appThemeStyle }) => {
   const isActive = useIsVaultActive();
+  const wasActiveRef = useRef(isActive);
+  const [suppressActiveTransition, setSuppressActiveTransition] = useState(false);
+  const isActivating = isActive && !wasActiveRef.current;
+  const shouldSuppressTransition = isActivating || suppressActiveTransition;
   const containerStyle: React.CSSProperties = isActive
     ? {}
     : { visibility: 'hidden', pointerEvents: 'none', position: 'absolute', zIndex: -1 };
 
+  useLayoutEffect(() => {
+    const wasActive = wasActiveRef.current;
+    wasActiveRef.current = isActive;
+    if (!isActive || wasActive) return;
+
+    setSuppressActiveTransition(true);
+    const view = window;
+    let firstFrame = 0;
+    let secondFrame = 0;
+    firstFrame = view.requestAnimationFrame(() => {
+      secondFrame = view.requestAnimationFrame(() => {
+        setSuppressActiveTransition(false);
+      });
+    });
+
+    return () => {
+      view.cancelAnimationFrame(firstFrame);
+      view.cancelAnimationFrame(secondFrame);
+    };
+  }, [isActive]);
+
   return (
-    <div className={cn("absolute inset-0", isActive ? "z-20" : "")} style={containerStyle}>
+    <div
+      className={cn("absolute inset-0", isActive ? "z-20" : "")}
+      data-inactive-app-surface={isActive ? undefined : "true"}
+      data-app-surface-transition-suppressed={shouldSuppressTransition ? "true" : undefined}
+      style={{ ...appThemeStyle, ...containerStyle }}
+    >
       {children}
     </div>
   );
@@ -51,7 +84,11 @@ export const LogViewWrapper: React.FC<LogViewWrapperProps> = ({ logView, default
   const containerStyle = getLogViewWrapperStyle(isVisible, hostTreeLayoutWidth);
 
   return (
-    <div className={cn("absolute inset-0", isVisible ? "z-20" : "")} style={containerStyle}>
+    <div
+      className={cn("absolute inset-0", isVisible ? "z-20" : "")}
+      data-inactive-app-surface={isVisible ? undefined : "true"}
+      style={containerStyle}
+    >
       <Suspense fallback={null}>
         <LazyLogView
           log={logView.log}

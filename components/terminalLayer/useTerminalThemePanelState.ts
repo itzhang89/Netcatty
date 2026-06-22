@@ -228,19 +228,25 @@ export function useTerminalThemePanelState({
   const handleThemeChangeForFocusedSession = useCallback((themeId: string) => {
       if (themeId === previewedOrVisibleThemeId) return;
       if (!focusedHost && !followAppTerminalTheme) return;
-      applyTerminalPreviewVars(previewTargetSessionId, themeId);
-      applyTopTabsPreviewVars(themeId);
-      applyHostTreePreviewVars(themeId);
-      setThemePreview({ targetSessionId: previewTargetSessionId, themeId });
       if (themeCommitTimerRef.current) {
         clearTimeout(themeCommitTimerRef.current);
+        themeCommitTimerRef.current = null;
       }
+      if (followAppTerminalTheme) {
+        clearTerminalPreviewVars(previewTargetSessionId);
+        clearHostTreePreviewVars();
+        clearTopTabsPreviewVars();
+        setThemePreview({ targetSessionId: null, themeId: null });
+        onUpdateFollowAppTerminalThemeId?.(themeId);
+        return;
+      }
+
+      applyTopTabsPreviewVars(themeId);
+      applyHostTreePreviewVars(themeId);
+      applyTerminalPreviewVars(previewTargetSessionId, themeId);
+      setThemePreview({ targetSessionId: previewTargetSessionId, themeId });
       themeCommitTimerRef.current = setTimeout(() => {
         startTransition(() => {
-          if (followAppTerminalTheme) {
-            onUpdateFollowAppTerminalThemeId?.(themeId);
-            return;
-          }
           if (isFocusedHostEphemeral) {
             onUpdateTerminalThemeId?.(themeId);
             return;

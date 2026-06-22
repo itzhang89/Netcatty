@@ -437,17 +437,19 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   }, [status]);
 
 
-  // Sync xterm theme before browser paint so canvas + DOM CSS vars update in the same frame
+  // Sync xterm theme before browser paint and force the renderer to catch up so
+  // split panes do not visibly repaint one after another.
   useLayoutEffect(() => {
-    if (termRef.current) {
-      termRef.current.options.theme = {
-        ...effectiveTheme.colors,
-        selectionBackground: effectiveTheme.colors.selection,
-        scrollbarSliderBackground: effectiveTheme.colors.foreground + '33',
-        scrollbarSliderHoverBackground: effectiveTheme.colors.foreground + '66',
-        scrollbarSliderActiveBackground: effectiveTheme.colors.foreground + '80',
-      };
-    }
+    const term = termRef.current;
+    if (!term) return;
+    term.options.theme = {
+      ...effectiveTheme.colors,
+      selectionBackground: effectiveTheme.colors.selection,
+      scrollbarSliderBackground: effectiveTheme.colors.foreground + '33',
+      scrollbarSliderHoverBackground: effectiveTheme.colors.foreground + '66',
+      scrollbarSliderActiveBackground: effectiveTheme.colors.foreground + '80',
+    };
+    forceSyncRenderAfterResize(term);
   }, [effectiveTheme]);
 
 

@@ -81,3 +81,10 @@ test("terminal body keeps a slight inset from the surrounding chrome", () => {
   assert.match(source, /left=\{terminalBodyInset\}/);
   assert.match(source, /bottom=\{terminalBodyInset\}/);
 });
+
+test("terminal theme updates force xterm renderer to repaint immediately", () => {
+  const source = readFileSync(new URL("./useTerminalEffects.ts", import.meta.url), "utf8");
+
+  assert.match(source, /term\.options\.theme = \{/);
+  assert.match(source, /forceSyncRenderAfterResize\(term\)/);
+});

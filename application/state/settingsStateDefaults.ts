@@ -115,6 +115,37 @@ export const resolveThemeAccentForeground = (
   return resolveReadableForegroundForHsl(accentToken, tokens.primaryForeground);
 };
 
+export const buildAppThemeCssVars = (
+  tokens: UiThemeTokens,
+  accentMode: 'theme' | 'custom',
+  accentOverride: string,
+): Record<string, string> => {
+  const accentToken = accentMode === 'custom' ? accentOverride : tokens.accent;
+  const computedAccentForeground = resolveThemeAccentForeground(tokens, accentMode, accentOverride);
+
+  return {
+    '--background': tokens.background,
+    '--foreground': tokens.foreground,
+    '--card': tokens.card,
+    '--card-foreground': tokens.cardForeground,
+    '--popover': tokens.popover,
+    '--popover-foreground': tokens.popoverForeground,
+    '--primary': accentToken,
+    '--primary-foreground': computedAccentForeground,
+    '--secondary': tokens.secondary,
+    '--secondary-foreground': tokens.secondaryForeground,
+    '--muted': tokens.muted,
+    '--muted-foreground': tokens.mutedForeground,
+    '--accent': accentToken,
+    '--accent-foreground': computedAccentForeground,
+    '--destructive': tokens.destructive,
+    '--destructive-foreground': tokens.destructiveForeground,
+    '--border': tokens.border,
+    '--input': tokens.input,
+    '--ring': accentToken,
+  };
+};
+
 export const isValidUiThemeId = (theme: 'light' | 'dark', value: string): boolean => {
   const list = theme === 'dark' ? DARK_UI_THEMES : LIGHT_UI_THEMES;
   return list.some((preset) => preset.id === value);
@@ -152,28 +183,10 @@ export const applyThemeTokens = (
   const root = window.document.documentElement;
   root.classList.remove('light', 'dark');
   root.classList.add(resolvedTheme);
-  root.style.setProperty('--background', tokens.background);
-  root.style.setProperty('--foreground', tokens.foreground);
-  root.style.setProperty('--card', tokens.card);
-  root.style.setProperty('--card-foreground', tokens.cardForeground);
-  root.style.setProperty('--popover', tokens.popover);
-  root.style.setProperty('--popover-foreground', tokens.popoverForeground);
-  const accentToken = accentMode === 'custom' ? accentOverride : tokens.accent;
-  const computedAccentForeground = resolveThemeAccentForeground(tokens, accentMode, accentOverride);
-
-  root.style.setProperty('--primary', accentToken);
-  root.style.setProperty('--primary-foreground', computedAccentForeground);
-  root.style.setProperty('--secondary', tokens.secondary);
-  root.style.setProperty('--secondary-foreground', tokens.secondaryForeground);
-  root.style.setProperty('--muted', tokens.muted);
-  root.style.setProperty('--muted-foreground', tokens.mutedForeground);
-  root.style.setProperty('--accent', accentToken);
-  root.style.setProperty('--accent-foreground', computedAccentForeground);
-  root.style.setProperty('--destructive', tokens.destructive);
-  root.style.setProperty('--destructive-foreground', tokens.destructiveForeground);
-  root.style.setProperty('--border', tokens.border);
-  root.style.setProperty('--input', tokens.input);
-  root.style.setProperty('--ring', accentToken);
+  const cssVars = buildAppThemeCssVars(tokens, accentMode, accentOverride);
+  for (const [property, value] of Object.entries(cssVars)) {
+    root.style.setProperty(property, value);
+  }
 
   // Sync with native window title bar (Electron)
   netcattyBridge.get()?.setTheme?.(themeSource);

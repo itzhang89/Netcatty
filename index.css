@@ -367,6 +367,20 @@ html[data-theme-transition] *::after {
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+[data-inactive-app-surface],
+[data-inactive-app-surface] *,
+[data-inactive-app-surface] *::before,
+[data-inactive-app-surface] *::after {
+  transition: none !important;
+}
+
+[data-app-surface-transition-suppressed],
+[data-app-surface-transition-suppressed] *,
+[data-app-surface-transition-suppressed] *::before,
+[data-app-surface-transition-suppressed] *::after {
+  transition: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-old(root),
   ::view-transition-new(root) {

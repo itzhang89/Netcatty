@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense, lazy, useMemo } from 'react';
 import { AlertTriangle, Download, Trash2 } from 'lucide-react';
 import { activeTabStore, toEditorTabId } from '../state/activeTabStore';
 import { editorTabStore } from '../state/editorTabStore';
@@ -19,6 +19,8 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { toast } from '../../components/ui/toast';
 import { AppHostTreeLayer } from './AppHostTreeLayer';
+import { getUiThemeById } from '../../infrastructure/config/uiThemes';
+import { buildAppThemeCssVars } from '../state/settingsStateDefaults';
 
 const LazyProtocolSelectDialog = lazy(() => import('../../components/ProtocolSelectDialog'));
 const LazyQuickSwitcher = lazy(() =>
@@ -54,6 +56,17 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     updateNoteGroups, updateNotes, updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, workspaceRenameTarget, workspaceRenameValue, workspaces,
     VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper,
   } = ctx;
+
+  const appThemeStyle = useMemo(() => {
+    const tokens = getUiThemeById(
+      resolvedTheme,
+      resolvedTheme === 'dark' ? settings.darkUiThemeId : settings.lightUiThemeId,
+    ).tokens;
+    return {
+      ...buildAppThemeCssVars(tokens, accentMode, customAccent),
+      colorScheme: resolvedTheme,
+    } as React.CSSProperties;
+  }, [accentMode, customAccent, resolvedTheme, settings.darkUiThemeId, settings.lightUiThemeId]);
 
   return (
     <SnippetExecutionProvider>
@@ -163,7 +176,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
           onCreateLocalTerminal={handleCreateLocalTerminal}
         />
 
-        <VaultViewContainer>
+        <VaultViewContainer appThemeStyle={appThemeStyle}>
           <VaultView
             hosts={hosts}
             keys={keys}
