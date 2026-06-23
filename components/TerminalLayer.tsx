@@ -66,7 +66,7 @@ import {
 } from './terminalLayer/terminalLayerSessionRouting';
 import { resolvePreferredTerminalCwd, scheduleBackendCwdProbeAfterCommand } from './terminal/sftpCwd';
 import { classifyDistroId, shouldProbeSessionCwd } from '../domain/host';
-import { resolveHostFollowTerminalCwd } from './sftp/sftpFollowTerminalCwd';
+import { resolveHostFollowTerminalCwd, resolveSftpFollowTerminalCwdTargetHost } from './sftp/sftpFollowTerminalCwd';
 
 import {
   AIChatPanelsHost,
@@ -245,7 +245,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     if (provider) {
       codingCliOutputScannersRef.current.delete(sessionId);
       codingCliOutputScanDisabledRef.current.delete(sessionId);
-      codingCliOutputScanDisabledRef.current.delete(sessionId);
       applySessionCodingCliProvider(sessionId, provider.id);
     }
   }, [applySessionCodingCliProvider]);
@@ -254,14 +253,32 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
     if (!session) return;
     const host = hostsRef.current.find((candidate) => candidate.id === session.hostId);
-    if (host?.disableDynamicTabTitle) {
+    const isDynamicTitleDisabled = host?.disableDynamicTabTitle === true;
+    if (isDynamicTitleDisabled) {
       onUpdateSessionDynamicTitle?.(sessionId, null);
-      return;
+    } else {
+      onUpdateSessionDynamicTitle?.(sessionId, title);
     }
-    onUpdateSessionDynamicTitle?.(sessionId, title);
 
     const trimmedTitle = title?.trim();
     if (!trimmedTitle) {
+      if (session.codingCliProviderId) {
+        codingCliOutputScannersRef.current.delete(sessionId);
+        codingCliOutputScanDisabledRef.current.delete(sessionId);
+        onUpdateSessionCodingCliProvider?.(sessionId, null);
+      }
+      return;
+    }
+
+    if (isDynamicTitleDisabled) {
+      if (
+        session.codingCliProviderId
+        && shouldClearCodingCliProviderForTitle(trimmedTitle, session.codingCliProviderId)
+      ) {
+        codingCliOutputScannersRef.current.delete(sessionId);
+        codingCliOutputScanDisabledRef.current.delete(sessionId);
+        onUpdateSessionCodingCliProvider?.(sessionId, null);
+      }
       return;
     }
 
@@ -269,7 +286,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     if (providerId) {
       if (!session.codingCliProviderId || session.codingCliProviderId !== providerId) {
         codingCliOutputScannersRef.current.delete(sessionId);
-      codingCliOutputScanDisabledRef.current.delete(sessionId);
+        codingCliOutputScanDisabledRef.current.delete(sessionId);
         applySessionCodingCliProvider(sessionId, providerId);
       }
       return;
@@ -704,7 +721,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
     if (!session || !canReuseTerminalConnection(session)) return;
     const sessionHost = sessionHostsMapRef.current.get(sessionId);
-    if (!resolveHostFollowTerminalCwd(sessionHost?.sftpFollowTerminalCwd, sftpFollowTerminalCwdRef.current)) return;
+    const visibleSftpHost = sftpHostForTabRef.current.get(tabId) ?? null;
+    const followHost = resolveSftpFollowTerminalCwdTargetHost(visibleSftpHost, sessionHost);
+    if (!resolveHostFollowTerminalCwd(followHost?.sftpFollowTerminalCwd, sftpFollowTerminalCwdRef.current)) return;
 
     const revisionAtCommand = terminalCwdRevisionRef.current;
     const probeGeneration = (cwdProbeGenerationRef.current.get(sessionId) ?? 0) + 1;
