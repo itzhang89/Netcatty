@@ -21,31 +21,13 @@ const clearSyncBlockTimer = (term: XTerm): void => {
   syncBlockTimers.delete(term);
 };
 
-const abandonSyncBlock = (term: XTerm, state: SyncBlockFilterState): void => {
+const expireSyncBlock = (term: XTerm, state: SyncBlockFilterState): void => {
   state.inSyncBlock = false;
-  state.pending = "";
   clearSyncBlockTimer(term);
-};
-
-const scheduleSyncBlockTimeout = (term: XTerm, state: SyncBlockFilterState): void => {
-  clearSyncBlockTimer(term);
-  if (!state.inSyncBlock) {
-    return;
-  }
-  syncBlockTimers.set(
-    term,
-    setTimeout(() => {
-      syncBlockTimers.delete(term);
-      abandonSyncBlock(term, state);
-    }, SYNC_BLOCK_TIMEOUT_MS),
-  );
 };
 
 export const resetTerminalSyncBlockFilter = (term: XTerm): void => {
-  const state = syncBlockFilterStates.get(term);
-  if (state) {
-    abandonSyncBlock(term, state);
-  }
+  clearSyncBlockTimer(term);
   syncBlockFilterStates.set(term, createSyncBlockFilterState());
 };
 
@@ -58,13 +40,30 @@ const getSyncBlockFilterState = (term: XTerm): SyncBlockFilterState => {
   return state;
 };
 
+const scheduleSyncBlockTimeout = (term: XTerm, state: SyncBlockFilterState): void => {
+  if (syncBlockTimers.has(term) || !state.inSyncBlock) {
+    return;
+  }
+
+  syncBlockTimers.set(
+    term,
+    setTimeout(() => {
+      syncBlockTimers.delete(term);
+      expireSyncBlock(term, state);
+    }, SYNC_BLOCK_TIMEOUT_MS),
+  );
+};
+
 export const filterTerminalSessionData = (term: XTerm, data: string): string => {
   const state = getSyncBlockFilterState(term);
+  const wasInSyncBlock = state.inSyncBlock;
   const filtered = filterSyncBlockClears(data, state);
-  if (state.inSyncBlock) {
+
+  if (state.inSyncBlock && !wasInSyncBlock) {
     scheduleSyncBlockTimeout(term, state);
-  } else {
+  } else if (!state.inSyncBlock) {
     clearSyncBlockTimer(term);
   }
+
   return filtered;
 };
