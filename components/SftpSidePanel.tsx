@@ -45,6 +45,11 @@ import {
   resolveHostFollowTerminalCwd,
   shouldFollowTerminalCwdNavigate,
 } from "./sftp/sftpFollowTerminalCwd";
+import {
+  findReusableSftpSidePanelTab,
+  shouldResetSftpSidePanelSourceSession,
+  shouldSkipSftpSidePanelAutoConnect,
+} from "./sftp/sftpSidePanelAutoConnect";
 
 interface SftpSidePanelProps {
   hosts: Host[];
@@ -211,6 +216,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
 
   const connectedKeyRef = useRef<string | null>(null);
   const connectedHostObjRef = useRef<Host | null>(null);
+  const lastSourceSessionIdRef = useRef<string | null>(null);
   const lastAppliedInitialLocationKeyRef = useRef<string | null>(null);
   const handledPendingUploadIdRef = useRef<string | null>(null);
   const tabConnectionKeyMapRef = useRef<Map<string, string>>(new Map());
@@ -264,7 +270,31 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       activeHost.sftpSudo,
       activeHost.username,
     );
-    if (connectedKeyRef.current === connectionKey) return;
+    const sessionChanged = shouldResetSftpSidePanelSourceSession(
+      lastSourceSessionIdRef.current,
+      activeSessionId,
+    );
+    if (sessionChanged) {
+      connectedKeyRef.current = null;
+    }
+    if (activeSessionId) {
+      lastSourceSessionIdRef.current = activeSessionId;
+    }
+
+    const hasBackendSession = (connectionId: string) => !!s.getSftpIdForConnection(connectionId);
+    const activeTab = s.leftTabs.tabs.find((tab) => tab.id === s.leftTabs.activeTabId) ?? null;
+    const activeConnectionId = activeTab?.connection?.id;
+    if (
+      !sessionChanged
+      && shouldSkipSftpSidePanelAutoConnect(
+        connectionKey,
+        connectedKeyRef.current,
+        activeTab,
+        activeConnectionId ? hasBackendSession(activeConnectionId) : false,
+      )
+    ) {
+      return;
+    }
     if (hasActiveWork) return;
 
     logger.info("[SftpSidePanel] Auto-connect triggered", {
@@ -275,11 +305,15 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     });
 
     const tabs = s.leftTabs.tabs;
-    const existingTab = tabs.find((tab) => {
-      if (!tab.connection || tab.connection.hostId !== activeHost.id) return false;
-      if (tab.connection.status === "error" || tab.connection.status === "disconnected") return false;
-      return tabConnectionKeyMapRef.current.get(tab.id) === connectionKey;
-    });
+    const existingTab = sessionChanged
+      ? null
+      : findReusableSftpSidePanelTab(
+        tabs,
+        activeHost.id,
+        connectionKey,
+        tabConnectionKeyMapRef.current,
+        hasBackendSession,
+      );
     if (existingTab) {
       s.selectTab("left", existingTab.id);
       connectedKeyRef.current = connectionKey;
@@ -694,6 +728,12 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
   const hasActiveWork = showTextEditor || !!permissionsState || showFileOpenerDialog
     || (sftp.activeFileWatchCountRef?.current ?? 0) > 0;
 
+  const lastFailedFollowCwdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    lastFailedFollowCwdRef.current = null;
+  }, [sftp.leftPane.connection?.id]);
+
   const handleGoToTerminalCwd = useCallback(async () => {
     if (!onGetTerminalCwd) return;
     const cwd = await onGetTerminalCwd({ preferFreshBackend: true });
@@ -712,6 +752,7 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
       terminalCwd = await onGetTerminalCwd({ preferFreshBackend: true });
     }
     if (!terminalCwd) return;
+    if (lastFailedFollowCwdRef.current === terminalCwd) return;
 
     const connection = sftpRef.current.leftPane.connection;
     if (!shouldFollowTerminalCwdNavigate({
@@ -725,7 +766,12 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
       return;
     }
 
-    await sftpRef.current.navigateTo("left", terminalCwd);
+    const navigateResult = await sftpRef.current.navigateTo("left", terminalCwd);
+    if (navigateResult === "failed") {
+      lastFailedFollowCwdRef.current = terminalCwd;
+    } else if (navigateResult === "reached") {
+      lastFailedFollowCwdRef.current = null;
+    }
   }, [
     activeTerminalCwd,
     canFollowTerminalCwd,
@@ -739,6 +785,10 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
   const handleToggleFollowTerminalCwd = useCallback(() => {
     onSftpFollowTerminalCwdChange?.(!effectiveFollowTerminalCwd, followTerminalCwdHost);
   }, [effectiveFollowTerminalCwd, followTerminalCwdHost, onSftpFollowTerminalCwdChange]);
+
+  useEffect(() => {
+    lastFailedFollowCwdRef.current = null;
+  }, [activeTerminalCwd]);
 
   useEffect(() => {
     if (!effectiveFollowTerminalCwd || !canFollowTerminalCwd || !isVisible || hasActiveWork) return;
