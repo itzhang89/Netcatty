@@ -56,3 +56,36 @@ test("leaves non-clear redraw sequences inside synchronized-output blocks intact
     `${SYNC_START}${cursorHome}text${SYNC_END}`,
   );
 });
+
+test("handles sync start marker split across chunks", () => {
+  const state = createSyncBlockFilterState();
+  const startPrefix = SYNC_START.slice(0, -1);
+  const startSuffix = SYNC_START.slice(-1);
+
+  assert.equal(filterSyncBlockClears(startPrefix, state), "");
+  assert.equal(state.pending, startPrefix);
+  assert.equal(state.inSyncBlock, false);
+
+  assert.equal(
+    filterSyncBlockClears(`${startSuffix}${CLEAR}frame${SYNC_END}`, state),
+    `${SYNC_START}frame${SYNC_END}`,
+  );
+  assert.equal(state.inSyncBlock, false);
+  assert.equal(state.pending, "");
+});
+
+test("handles clear-screen marker split across chunks inside sync block", () => {
+  const state = createSyncBlockFilterState();
+  const clearPrefix = CLEAR.slice(0, -1);
+  const clearSuffix = CLEAR.slice(-1);
+
+  assert.equal(filterSyncBlockClears(SYNC_START, state), SYNC_START);
+  assert.equal(state.inSyncBlock, true);
+
+  assert.equal(filterSyncBlockClears(`${clearPrefix}`, state), "");
+  assert.equal(state.pending, clearPrefix);
+
+  assert.equal(filterSyncBlockClears(`${clearSuffix}frame${SYNC_END}`, state), `frame${SYNC_END}`);
+  assert.equal(state.inSyncBlock, false);
+  assert.equal(state.pending, "");
+});
