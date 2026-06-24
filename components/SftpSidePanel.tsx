@@ -43,7 +43,9 @@ import { KeyBinding, HotkeyScheme } from "../domain/models";
 import {
   mergeLatestFollowTerminalCwdHostSetting,
   resolveHostFollowTerminalCwd,
+  shouldClearBlockedFollowOnReach,
   shouldFollowTerminalCwdNavigate,
+  type SftpFollowTerminalCwdBlock,
 } from "./sftp/sftpFollowTerminalCwd";
 import {
   findReusableSftpSidePanelTab,
@@ -570,6 +572,10 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
   const panelRootRef = useRef<HTMLDivElement>(null);
   const dialogActionScopeIdRef = useRef(`sftp-side-panel:${crypto.randomUUID()}`);
   const [hasPaneFocus, setHasPaneFocus] = useState(false);
+  const [pendingFollowOverride, setPendingFollowOverride] = useState<{
+    hostId: string;
+    value: boolean;
+  } | null>(null);
 
   useSftpKeyboardShortcuts({
     keyBindings,
@@ -697,15 +703,34 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
     const conn = sftp.leftPane.connection;
     if (conn && !conn.isLocal) {
       const latestHost = hosts.find((h) => h.id === conn.hostId) ?? null;
+      const pendingFollowValue = pendingFollowOverride?.hostId === conn.hostId
+        ? pendingFollowOverride.value
+        : undefined;
       // Prefer the stored Host object from connect time — it preserves
       // session-time overrides that the vault host may lack.
       if (connectedHostObjRef.current && connectedHostObjRef.current.id === conn.hostId) {
-        return mergeLatestFollowTerminalCwdHostSetting(connectedHostObjRef.current, latestHost);
+        return mergeLatestFollowTerminalCwdHostSetting(
+          connectedHostObjRef.current,
+          latestHost,
+          pendingFollowValue,
+        );
       }
       return latestHost ?? activeHost;
     }
     return activeHost;
-  }, [activeHost, connectedHostObjRef, hosts, sftp.leftPane.connection]);
+  }, [activeHost, connectedHostObjRef, hosts, pendingFollowOverride, sftp.leftPane.connection]);
+
+  useEffect(() => {
+    if (!pendingFollowOverride) return;
+    const latestHost = hosts.find((host) => host.id === pendingFollowOverride.hostId);
+    if (latestHost?.sftpFollowTerminalCwd === pendingFollowOverride.value) {
+      setPendingFollowOverride(null);
+    }
+  }, [hosts, pendingFollowOverride]);
+
+  useEffect(() => {
+    setPendingFollowOverride(null);
+  }, [sftp.leftPane.connection?.id]);
 
   const followTerminalCwdHost = useMemo(() => {
     if (sftp.leftPane.connection?.isLocal) return null;
@@ -728,17 +753,53 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
   const hasActiveWork = showTextEditor || !!permissionsState || showFileOpenerDialog
     || (sftp.activeFileWatchCountRef?.current ?? 0) > 0;
 
-  const lastFailedFollowCwdRef = useRef<string | null>(null);
+  const blockedFollowRef = useRef<SftpFollowTerminalCwdBlock | null>(null);
+  const followSyncGenerationRef = useRef(0);
+  const effectiveFollowTerminalCwdRef = useRef(effectiveFollowTerminalCwd);
+  const canFollowTerminalCwdRef = useRef(canFollowTerminalCwd);
+  effectiveFollowTerminalCwdRef.current = effectiveFollowTerminalCwd;
+  canFollowTerminalCwdRef.current = canFollowTerminalCwd;
+  const connectionId = sftp.leftPane.connection?.id ?? null;
+  const connectionPath = sftp.leftPane.connection?.currentPath ?? null;
+
+  const invalidateInFlightFollowSync = useCallback(() => {
+    followSyncGenerationRef.current += 1;
+    blockedFollowRef.current = null;
+  }, []);
 
   useEffect(() => {
-    lastFailedFollowCwdRef.current = null;
-  }, [sftp.leftPane.connection?.id]);
+    blockedFollowRef.current = null;
+  }, [
+    activeTerminalCwd,
+    followTerminalCwdHost?.id,
+    connectionId,
+  ]);
+
+  useEffect(() => {
+    if (effectiveFollowTerminalCwd) return;
+    invalidateInFlightFollowSync();
+  }, [effectiveFollowTerminalCwd, invalidateInFlightFollowSync]);
+
+  useEffect(() => {
+    if (
+      shouldClearBlockedFollowOnReach(
+        blockedFollowRef.current,
+        connectionId,
+        connectionPath,
+        sftp.leftPane.loading,
+      )
+    ) {
+      blockedFollowRef.current = null;
+    }
+  }, [connectionId, connectionPath, sftp.leftPane.loading]);
 
   const handleGoToTerminalCwd = useCallback(async () => {
     if (!onGetTerminalCwd) return;
     const cwd = await onGetTerminalCwd({ preferFreshBackend: true });
-    if (cwd) {
-      sftpRef.current.navigateTo("left", cwd);
+    if (!cwd) return;
+    const navigateResult = await sftpRef.current.navigateTo("left", cwd);
+    if (navigateResult === "reached") {
+      blockedFollowRef.current = null;
     }
   }, [onGetTerminalCwd, sftpRef]);
 
@@ -747,30 +808,53 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
       return;
     }
 
+    const syncGeneration = followSyncGenerationRef.current;
+
     let terminalCwd = activeTerminalCwd;
     if (!terminalCwd) {
       terminalCwd = await onGetTerminalCwd({ preferFreshBackend: true });
     }
     if (!terminalCwd) return;
-    if (lastFailedFollowCwdRef.current === terminalCwd) return;
+    if (
+      syncGeneration !== followSyncGenerationRef.current
+      || !effectiveFollowTerminalCwdRef.current
+      || !canFollowTerminalCwdRef.current
+    ) {
+      return;
+    }
 
     const connection = sftpRef.current.leftPane.connection;
     if (!shouldFollowTerminalCwdNavigate({
-      followEnabled: effectiveFollowTerminalCwd,
+      followEnabled: effectiveFollowTerminalCwdRef.current,
       isVisible,
       terminalCwd,
       currentPath: connection?.currentPath,
+      connectionId: connection?.id,
       hasActiveWork,
       isConnected: Boolean(connection && !connection.isLocal && connection.status === "connected"),
+      blockedFollow: blockedFollowRef.current,
     })) {
       return;
     }
 
     const navigateResult = await sftpRef.current.navigateTo("left", terminalCwd);
-    if (navigateResult === "failed") {
-      lastFailedFollowCwdRef.current = terminalCwd;
+    if (
+      syncGeneration !== followSyncGenerationRef.current
+      || !effectiveFollowTerminalCwdRef.current
+      || !canFollowTerminalCwdRef.current
+    ) {
+      return;
+    }
+
+    const currentConnection = sftpRef.current.leftPane.connection;
+    if (!currentConnection || currentConnection.id !== connection?.id) {
+      return;
+    }
+
+    if (navigateResult === "failed" && currentConnection.id) {
+      blockedFollowRef.current = { connectionId: currentConnection.id, terminalCwd };
     } else if (navigateResult === "reached") {
-      lastFailedFollowCwdRef.current = null;
+      blockedFollowRef.current = null;
     }
   }, [
     activeTerminalCwd,
@@ -783,12 +867,15 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
   ]);
 
   const handleToggleFollowTerminalCwd = useCallback(() => {
-    onSftpFollowTerminalCwdChange?.(!effectiveFollowTerminalCwd, followTerminalCwdHost);
-  }, [effectiveFollowTerminalCwd, followTerminalCwdHost, onSftpFollowTerminalCwdChange]);
-
-  useEffect(() => {
-    lastFailedFollowCwdRef.current = null;
-  }, [activeTerminalCwd]);
+    const nextEnabled = !effectiveFollowTerminalCwd;
+    if (!nextEnabled) {
+      invalidateInFlightFollowSync();
+    }
+    if (followTerminalCwdHost?.id) {
+      setPendingFollowOverride({ hostId: followTerminalCwdHost.id, value: nextEnabled });
+    }
+    onSftpFollowTerminalCwdChange?.(nextEnabled, followTerminalCwdHost);
+  }, [effectiveFollowTerminalCwd, followTerminalCwdHost, invalidateInFlightFollowSync, onSftpFollowTerminalCwdChange]);
 
   useEffect(() => {
     if (!effectiveFollowTerminalCwd || !canFollowTerminalCwd || !isVisible || hasActiveWork) return;
