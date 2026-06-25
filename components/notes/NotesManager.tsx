@@ -115,6 +115,8 @@ export interface NotesManagerProps {
   onOpenHost?: (host: Host, source?: { noteId: string }) => void;
   displayMode?: "full" | "sidebar";
   openNoteId?: string | null;
+  /** Called after a one-shot openNoteId focus request has been applied. */
+  onOpenNoteIdHandled?: () => void;
 }
 
 type HoverActionMenuProps = {
@@ -326,11 +328,12 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   onOpenHost,
   displayMode = "full",
   openNoteId = null,
+  onOpenNoteIdHandled,
 }) => {
   const { t } = useI18n();
   const { openExternal } = useApplicationBackend();
   const isSidebarMode = displayMode === "sidebar";
-  const initialOpenNoteId = isSidebarMode && openNoteId && notes.some((note) => note.id === openNoteId)
+  const initialOpenNoteId = openNoteId && notes.some((note) => note.id === openNoteId)
     ? openNoteId
     : null;
   const [query, setQuery] = useState("");
@@ -413,17 +416,18 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   }, [selectedNote?.group]);
 
   useEffect(() => {
-    if (!isSidebarMode || !openNoteId) return;
+    if (!openNoteId) return;
     const note = sortedNotes.find((item) => item.id === openNoteId);
     if (!note) return;
-    const nextSelection = getNoteSelectionState(note, true);
+    const nextSelection = getNoteSelectionState(note, isSidebarMode);
     setSelectedNoteId(nextSelection.selectedNoteId);
     setSelectedGroup(nextSelection.selectedGroup);
     setOverlayNoteId(nextSelection.overlayNoteId);
     if (note.group) {
       setExpandedGroups((current) => new Set([...current, ...ancestorNoteGroupPaths(note.group || "")]));
     }
-  }, [isSidebarMode, openNoteId, sortedNotes]);
+    onOpenNoteIdHandled?.();
+  }, [isSidebarMode, onOpenNoteIdHandled, openNoteId, sortedNotes]);
 
   useEffect(() => {
     if (expandedPanel !== "search") return;

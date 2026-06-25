@@ -97,6 +97,7 @@ const removeMountedSidePanelTabId = (
 
 const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   hosts,
+  portForwardingRules = [],
   customGroups,
   groupConfigs,
   proxyProfiles,
@@ -107,6 +108,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   notes,
   noteGroups,
   openNoteRequest,
+  onOpenVaultNoteFromChat,
+  onOpenVaultHostFromChat,
+  onOpenVaultSectionFromChat,
   sessions,
   workspaces,
   knownHosts = [],
@@ -465,6 +469,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   workspacesRef.current = workspaces;
   const hostsRef = useRef(hosts);
   hostsRef.current = hosts;
+  const portForwardingRulesRef = useRef(portForwardingRules);
+  portForwardingRulesRef.current = portForwardingRules;
   const onSetWorkspaceFocusedSessionRef = useRef(onSetWorkspaceFocusedSession);
   onSetWorkspaceFocusedSessionRef.current = onSetWorkspaceFocusedSession;
 
@@ -1343,6 +1349,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     hostMap,
     hosts,
     hostsRef,
+    portForwardingRules,
+    portForwardingRulesRef,
     hotkeyScheme,
     disableTerminalFontZoom,
     restoreTerminalCwd,
@@ -1447,6 +1455,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     snippets,
     noteGroups,
     notes,
+    onOpenVaultHostFromChat,
+    onOpenVaultNoteFromChat,
+    onOpenVaultSectionFromChat,
     splitHorizontalHandlersRef,
     splitVerticalHandlersRef,
     sshDebugLogsEnabled,

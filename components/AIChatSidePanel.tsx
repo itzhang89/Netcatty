@@ -14,7 +14,7 @@ import type {
 } from '../infrastructure/ai/types';
 import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
 import { getAgentModelPresets } from '../infrastructure/ai/types';
-import { getExternalAgentSdkBackend, matchesManagedAgentConfig } from '../infrastructure/ai/managedAgents';
+import { getExternalAgentSdkBackend, getManualAgentCommand, matchesManagedAgentConfig } from '../infrastructure/ai/managedAgents';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
 import {
   getReadyUserSkillOptions,
@@ -48,7 +48,10 @@ import {
 import { getScopedHistorySessions } from './ai/scopedHistorySessions';
 import { buildExternalAgentHistoryMessagesForBridge } from './ai/externalAgentHistory';
 import { canSendWithAgent, findEnabledExternalAgent } from './ai/agentSendEligibility';
-import { clearAllPendingApprovals } from '../infrastructure/ai/shared/approvalGate';
+import { registerGrantPersister } from '../infrastructure/ai/shared/approvalGate';
+import { stopAgentTurn } from '../infrastructure/ai/harness/agentStop';
+import { getAgentRuntime } from '../infrastructure/ai/harness/globalAgentRuntime';
+import { useAIPermissionGrantsState } from '../application/state/useAIPermissionGrantsState';
 import { useConversationExport } from './ai/hooks/useConversationExport';
 import type { AIChatSidePanelProps } from './AIChatSidePanel.types';
 import {
@@ -93,11 +96,6 @@ function invalidateUserSkillsStatusCache() {
 
 if (typeof window !== 'undefined') {
   subscribeUserSkillsStatusChanged(invalidateUserSkillsStatusCache);
-}
-
-function getManualAgentCommand(config: ExternalAgentConfig | null | undefined): string | undefined {
-  const command = String(config?.command || '').trim();
-  return config?.commandSource === 'manual' && command ? command : undefined;
 }
 
 function loadUserSkillsStatus(
@@ -265,6 +263,11 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   terminalSessions = [],
   resolveExecutorContext,
   isVisible = true,
+  notes = [],
+  hosts = [],
+  onOpenVaultNote,
+  onOpenVaultHost,
+  onOpenVaultSection,
 }) => {
   const { t } = useI18n();
   const scopeKey = `${scopeType}:${scopeTargetId ?? ''}`;
@@ -989,21 +992,31 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     clearScopeDraft, showScopeSessionView, setActiveSessionId,
   ]);
 
-  const stopStreamingForSession = useCallback((sessionId: string) => {
+  const stopStreamingForSession = useCallback(async (sessionId: string) => {
     const controller = abortControllersRef.current.get(sessionId);
-    controller?.abort();
-    abortControllersRef.current.delete(sessionId);
     setStreamingForScope(sessionId, false);
     updateLastMessage(sessionId, (msg) => ({
       ...msg,
       statusText: '',
       executionStatus: msg.executionStatus === 'running' ? 'cancelled' : msg.executionStatus,
     }));
-    clearAllPendingApprovals(sessionId);
-    const bridge = getNetcattyBridge();
-    bridge?.aiCattyCancelExec?.(sessionId);
-    bridge?.aiSdkAgentCancel?.('', sessionId);
+    await stopAgentTurn({
+      chatSessionId: sessionId,
+      abortController: controller,
+      bridge: getNetcattyBridge(),
+      reason: 'user',
+    });
+    await getAgentRuntime().waitForActiveTurn(sessionId);
+    if (controller && abortControllersRef.current.get(sessionId) === controller) {
+      abortControllersRef.current.delete(sessionId);
+    }
   }, [setStreamingForScope, updateLastMessage, abortControllersRef]);
+
+  const { addGrant } = useAIPermissionGrantsState();
+
+  useEffect(() => {
+    return registerGrantPersister((rule) => { addGrant(rule); });
+  }, [addGrant]);
 
   const handleStop = useCallback(() => {
     if (!activeSessionId) return;
@@ -1022,7 +1035,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   );
 
   const handleDeleteSession = useCallback(
-    (e: React.MouseEvent, sessionId: string) => {
+    async (e: React.MouseEvent, sessionId: string) => {
       e.stopPropagation();
       const deletingActiveSession =
         activeSessionId === sessionId
@@ -1038,10 +1051,11 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         ?? currentAgentId;
 
       if (abortControllersRef.current.has(sessionId) || streamingSessionIds.has(sessionId)) {
-        stopStreamingForSession(sessionId);
+        await stopStreamingForSession(sessionId);
       }
 
       deleteSession(sessionId, scopeKey);
+      getAgentRuntime().clearChatSession(sessionId);
 
       if (deletingActiveSession || deletingLastScopedSession) {
         setShowHistory(false);
@@ -1125,6 +1139,11 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         removeSelectedUserSkill={removeSelectedUserSkill}
         globalPermissionMode={globalPermissionMode}
         setGlobalPermissionMode={setGlobalPermissionMode}
+        notes={notes}
+        hosts={hosts}
+        onOpenVaultNote={onOpenVaultNote}
+        onOpenVaultHost={onOpenVaultHost}
+        onOpenVaultSection={onOpenVaultSection}
       />
     </React.Profiler>
   );
@@ -1190,6 +1209,11 @@ export function aiChatSidePanelPropsAreEqual(
   if (prev.scopeHostIds !== next.scopeHostIds) return false;
   if (prev.terminalSessions !== next.terminalSessions) return false;
   if (prev.resolveExecutorContext !== next.resolveExecutorContext) return false;
+  if (prev.notes !== next.notes) return false;
+  if (prev.hosts !== next.hosts) return false;
+  if (prev.onOpenVaultNote !== next.onOpenVaultNote) return false;
+  if (prev.onOpenVaultHost !== next.onOpenVaultHost) return false;
+  if (prev.onOpenVaultSection !== next.onOpenVaultSection) return false;
 
   for (const key of AI_CHAT_SIDE_PANEL_AI_STATE_KEYS) {
     if (prev[key] !== next[key]) return false;
