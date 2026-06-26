@@ -1,7 +1,8 @@
 "use strict";
 
-const FLOW_HIGH_WATER_MARK = 128 * 1024;
-const FLOW_LOW_WATER_MARK = 32 * 1024;
+// Match VS Code FlowControlConstants (terminal.ts).
+const FLOW_HIGH_WATER_MARK = 100_000;
+const FLOW_LOW_WATER_MARK = 5_000;
 
 function getFlowTarget(session) {
   return session?.stream || session?.proc || session?.socket || session?.serialPort || null;

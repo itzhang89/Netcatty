@@ -104,6 +104,10 @@ import {
   serializeTerminalForHibernate,
 } from "./terminal/terminalHibernateRuntime";
 import {
+  ackTerminalSessionFlow,
+  flushTerminalSessionFlowAck,
+} from "./terminal/runtime/terminalFlowAckBuffer";
+import {
   isTerminalFileTransferActive,
   resolveHibernateKeepRendererCount,
   resolveHibernatePreferWasmSerialize,
@@ -993,6 +997,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const beginHibernatedSessionListeners = useCallback((backendId: string) => {
     disposeDataRef.current?.();
+    flushTerminalSessionFlowAck(backendId);
     hibernatePendingBufferRef.current = "";
     disposeDataRef.current = terminalBackend.onSessionData(
       backendId,
@@ -1001,6 +1006,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           hibernatePendingBufferRef.current,
           chunk,
         );
+        ackTerminalSessionFlow(terminalBackend, backendId, chunk.length);
       },
       { replayBacklog: true },
     );

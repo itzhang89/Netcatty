@@ -26,9 +26,14 @@ import { appendEraseScrollbackAfterFullErases } from "../clearTerminalViewport";
 import {
   enqueueCoalescedTerminalWrite,
   flushTerminalWriteCoalescer,
-  resetTerminalWriteCoalescer,
 } from "./terminalWriteCoalescer";
-import { FLOW_HIGH_WATER_MARK, FLOW_LOW_WATER_MARK } from "./terminalFlowConstants";
+import {
+  FLOW_HIGH_WATER_MARK,
+  FLOW_LOW_WATER_MARK,
+} from "./terminalFlowConstants";
+import {
+  ackTerminalSessionFlow,
+} from "./terminalFlowAckBuffer";
 import {
   enqueueTerminalWrite,
   setTerminalWriteQueueDropHandler,
@@ -97,10 +102,7 @@ export const getFlowController = (
     setTerminalWriteQueueDropHandler(term, (bytes) => {
       if (bytes <= 0) return;
       controller?.written(bytes);
-      const sessionId = ctx.sessionRef.current;
-      if (sessionId) {
-        ctx.terminalBackend.ackSessionFlow?.(sessionId, bytes);
-      }
+      ackTerminalSessionFlow(ctx.terminalBackend, ctx.sessionRef.current, bytes);
     });
   }
   return controller;
@@ -138,7 +140,8 @@ const writeSessionDataImmediate = (
   data: string,
 ) => {
   const flow = getFlowController(ctx, term);
-  enqueueTerminalWrite(term, data.length, (done) => {
+  const ingressBytes = data.length;
+  enqueueTerminalWrite(term, ingressBytes, (done) => {
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
     const filteredData = filterTerminalSessionData(term, data);
     const displayData = appendEraseScrollbackAfterFullErases(filteredData, {
@@ -176,11 +179,8 @@ const writeSessionDataImmediate = (
         handleTerminalOutputAutoScroll(ctx, term);
       }
       done();
-      flow.written(filteredData.length);
-      const sessionId = ctx.sessionRef.current;
-      if (sessionId) {
-        ctx.terminalBackend.ackSessionFlow?.(sessionId, filteredData.length);
-      }
+      flow.written(ingressBytes);
+      ackTerminalSessionFlow(ctx.terminalBackend, ctx.sessionRef.current, ingressBytes);
     };
 
     writeTerminalDataWithLineTimestamps(term, preparedDisplayData, afterWrite);
@@ -188,10 +188,7 @@ const writeSessionDataImmediate = (
     onDropped: (bytes) => {
       if (bytes <= 0) return;
       flow.written(bytes);
-      const sessionId = ctx.sessionRef.current;
-      if (sessionId) {
-        ctx.terminalBackend.ackSessionFlow?.(sessionId, bytes);
-      }
+      ackTerminalSessionFlow(ctx.terminalBackend, ctx.sessionRef.current, bytes);
     },
   });
 };

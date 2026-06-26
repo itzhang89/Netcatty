@@ -11,6 +11,11 @@ import {
   abortTerminalWriteQueue,
   getTerminalWriteQueueDepth,
 } from "./terminalWriteQueue";
+import {
+  ackTerminalSessionFlow,
+  clearTerminalSessionFlowAck,
+  flushTerminalSessionFlowAck,
+} from "./terminalFlowAckBuffer";
 
 type FlowBackend = {
   setSessionFlowPaused?: (sessionId: string, paused: boolean) => void;
@@ -25,8 +30,8 @@ const acknowledgeDroppedBytes = (
 ) => {
   if (bytes <= 0) return;
   flow?.written(bytes);
+  ackTerminalSessionFlow(backend, sessionId, bytes);
   if (sessionId) {
-    backend.ackSessionFlow?.(sessionId, bytes);
     backend.setSessionFlowPaused?.(sessionId, false);
   }
 };
@@ -46,7 +51,9 @@ export const teardownTerminalOutputPipeline = (
   abortTerminalWriteQueue(term, onDropped);
   flow.reset();
   if (sessionId) {
+    flushTerminalSessionFlowAck(sessionId);
     backend.setSessionFlowPaused?.(sessionId, false);
+    clearTerminalSessionFlowAck(sessionId);
   }
   resetTerminalWriteCoalescer(term);
 };
