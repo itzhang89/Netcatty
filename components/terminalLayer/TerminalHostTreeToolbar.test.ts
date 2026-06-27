@@ -8,7 +8,7 @@ test('host tree toolbar keeps the close button outside the clipped action row', 
   assert.match(source, /data-section="terminal-host-tree-toolbar-actions"/);
   assert.match(source, /data-section="terminal-host-tree-toolbar-close"/);
   assert.match(source, /data-section="terminal-host-tree-toolbar-actions-fade"/);
-  assert.match(source, /linear-gradient\(to right, transparent, var\(--terminal-host-tree-bg/);
+  assert.match(source, /linear-gradient\(to right, transparent, \$\{theme\.termBg\}\)/);
   assert.doesNotMatch(source, /compactActions/);
   assert.doesNotMatch(source, /flex-1 min-w-0" \/>/);
 });

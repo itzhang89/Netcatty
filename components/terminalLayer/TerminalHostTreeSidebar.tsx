@@ -636,7 +636,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
 
   const theme = useMemo(
     () => buildHostTreeThemeFromTerminalTheme(resolvedPreviewTheme),
-    [resolvedPreviewTheme.id, resolvedPreviewTheme.colors.background, resolvedPreviewTheme.colors.foreground],
+    [resolvedPreviewTheme],
   );
 
   const allTags = useMemo(() => {

@@ -10,6 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 export type HostTreeToolbarPanel = 'search' | 'tags' | null;
 
 type ToolbarTheme = {
+  termBg: string;
   termFg: string;
   mutedFg: string;
   separator: string;
@@ -193,7 +194,7 @@ export const TerminalHostTreeToolbar: React.FC<TerminalHostTreeToolbarProps> = (
             className="pointer-events-none absolute inset-y-0 right-0 w-5"
             data-section="terminal-host-tree-toolbar-actions-fade"
             style={{
-              background: 'linear-gradient(to right, transparent, var(--terminal-host-tree-bg, hsl(var(--background))))',
+              background: `linear-gradient(to right, transparent, ${theme.termBg})`,
             }}
           />
         </div>
