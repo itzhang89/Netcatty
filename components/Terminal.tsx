@@ -28,8 +28,10 @@ import {
   createTerminalEncodingStorageKey,
   isTerminalEncodingPreference,
   resolveInitialTerminalEncoding,
+  shouldSyncTerminalEncodingOnAttach,
   terminalEncodingPreferenceToCharset,
   type TerminalEncodingPreference,
+  type TerminalEncodingAttachConnection,
 } from "../domain/terminalEncodingPreference";
 import { resolveRestoreCwdIntent } from "../domain/sessionRestore";
 import {
@@ -589,6 +591,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     STORAGE_KEY_TERMINAL_ENCODING_BY_HOST_PREFIX,
     host,
   );
+  const initialRememberedTerminalEncoding = readOptionalStoredStringValue(
+    terminalEncodingStorageKey,
+    isTerminalEncodingPreference,
+  );
   const [, setRememberedTerminalEncoding] = useStoredString(
     terminalEncodingStorageKey,
     'utf-8',
@@ -597,14 +603,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const [terminalEncoding, setTerminalEncoding] = useState<TerminalEncodingPreference>(() => {
     return resolveInitialTerminalEncoding(
       host?.charset,
-      readOptionalStoredStringValue(
-        terminalEncodingStorageKey,
-        isTerminalEncodingPreference,
-      ),
+      initialRememberedTerminalEncoding,
     );
   });
   const terminalEncodingRef = useRef(terminalEncoding);
   terminalEncodingRef.current = terminalEncoding;
+  const hasRememberedTerminalEncodingRef = useRef(initialRememberedTerminalEncoding !== null);
   // True only after the user actively picks an encoding from the toolbar.
   // onSessionAttached uses this to decide whether to override the backend's
   // initial charset for telnet/serial reconnects — on a first attach we
@@ -1328,17 +1332,24 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       const isMosh = host.protocol === 'mosh' || host.moshEnabled;
       const isEt = host.protocol === 'et' || host.etEnabled;
       const isSSH = !isLocal && !isSerial && !isTelnet && !isMosh && !isEt;
-      if (isSSH) {
-        setSessionEncoding(id, terminalEncodingRef.current);
-        return;
-      }
-      // Telnet / serial: the backend already applied host.charset
+      const encodingAttachConnection: TerminalEncodingAttachConnection = isSSH
+        ? 'ssh'
+        : isTelnet
+          ? 'telnet'
+          : isSerial
+            ? 'serial'
+            : 'other';
+      // Telnet / serial: the backend already applied host.charset unless
+      // a remembered per-host choice exists. Remembered choices are explicit
+      // user preferences and must win on reconnect, including saved serial hosts.
       // (including arbitrary iconv labels like latin1 / shift_jis that
       // the UI's two-value state can't represent) through start*Session
-      // options, so don't clobber it on first attach. Only re-sync once
-      // the user has explicitly picked from the toolbar menu — that's
-      // the signal they want the UI choice to win on reconnect.
-      if ((isTelnet || isSerial) && userPickedEncodingRef.current) {
+      // options, so don't clobber it on first attach without a stored choice.
+      if (shouldSyncTerminalEncodingOnAttach({
+        connection: encodingAttachConnection,
+        userPickedEncoding: userPickedEncodingRef.current,
+        hasRememberedEncoding: hasRememberedTerminalEncodingRef.current,
+      })) {
         setSessionEncoding(id, terminalEncodingRef.current);
       }
     },

@@ -4,6 +4,7 @@ import {
   createTerminalEncodingStorageKey,
   resolveInitialTerminalEncoding,
   resolveTerminalEncodingFromCharset,
+  shouldSyncTerminalEncodingOnAttach,
   terminalEncodingPreferenceToCharset,
 } from "./terminalEncodingPreference";
 
@@ -39,6 +40,44 @@ test("unsupported charsets ignore remembered encoding", () => {
 test("maps terminal encoding preferences back to host charset labels", () => {
   assert.equal(terminalEncodingPreferenceToCharset("utf-8"), "UTF-8");
   assert.equal(terminalEncodingPreferenceToCharset("gb18030"), "GB18030");
+});
+
+test("syncs remembered serial encoding preferences on attach", () => {
+  assert.equal(
+    shouldSyncTerminalEncodingOnAttach({
+      connection: "serial",
+      userPickedEncoding: false,
+      hasRememberedEncoding: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldSyncTerminalEncodingOnAttach({
+      connection: "serial",
+      userPickedEncoding: false,
+      hasRememberedEncoding: false,
+    }),
+    false,
+  );
+});
+
+test("syncs SSH encoding on attach and leaves unrelated sessions alone", () => {
+  assert.equal(
+    shouldSyncTerminalEncodingOnAttach({
+      connection: "ssh",
+      userPickedEncoding: false,
+      hasRememberedEncoding: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldSyncTerminalEncodingOnAttach({
+      connection: "other",
+      userPickedEncoding: true,
+      hasRememberedEncoding: true,
+    }),
+    false,
+  );
 });
 
 test("creates isolated terminal encoding storage keys per host", () => {

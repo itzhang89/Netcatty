@@ -45,6 +45,24 @@ export const terminalEncodingPreferenceToCharset = (
   encoding: TerminalEncodingPreference,
 ): string => (encoding === 'gb18030' ? 'GB18030' : 'UTF-8');
 
+export type TerminalEncodingAttachConnection = 'ssh' | 'telnet' | 'serial' | 'other';
+
+export const shouldSyncTerminalEncodingOnAttach = ({
+  connection,
+  userPickedEncoding,
+  hasRememberedEncoding,
+}: {
+  connection: TerminalEncodingAttachConnection;
+  userPickedEncoding: boolean;
+  hasRememberedEncoding: boolean;
+}): boolean => {
+  if (connection === 'ssh') return true;
+  if (connection === 'telnet' || connection === 'serial') {
+    return userPickedEncoding || hasRememberedEncoding;
+  }
+  return false;
+};
+
 export const createTerminalEncodingStorageKey = (
   prefix: string,
   host: {
