@@ -746,6 +746,60 @@ test("worker renderer events are forwarded to their original webContents", () =>
   ]);
 });
 
+test("worker renderer events wrapped in MessageEvent data are forwarded", () => {
+  const child = new FakeChild();
+  const forwarded = [];
+  const manager = createTerminalWorkerManager({
+    utilityProcess: {
+      fork() {
+        return child;
+      },
+    },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return {
+            send(channel, payload) {
+              forwarded.push({ id, channel, payload });
+            },
+          };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+
+  manager.ensureStarted();
+  child.emit("message", {
+    data: {
+      kind: "renderer-event",
+      webContentsId: 7,
+      channel: "netcatty:zmodem:progress",
+      payload: {
+        sessionId: "session-1",
+        filename: "large.bin",
+        transferred: 1024,
+        total: 2048,
+        transferType: "download",
+      },
+    },
+  });
+
+  assert.deepEqual(forwarded, [
+    {
+      id: 7,
+      channel: "netcatty:zmodem:progress",
+      payload: {
+        sessionId: "session-1",
+        filename: "large.bin",
+        transferred: 1024,
+        total: 2048,
+        transferType: "download",
+      },
+    },
+  ]);
+});
+
 test("worker exit events close the session output route", () => {
   const child = new FakeChild();
   const closed = [];

@@ -187,7 +187,20 @@ function createTerminalWorkerManager(options = {}) {
     }
   }
 
-  function handleMessage(message) {
+  function unwrapMessageEvent(eventOrMessage) {
+    if (
+      eventOrMessage &&
+      typeof eventOrMessage === "object" &&
+      !("kind" in eventOrMessage) &&
+      "data" in eventOrMessage
+    ) {
+      return eventOrMessage.data;
+    }
+    return eventOrMessage;
+  }
+
+  function handleMessage(eventOrMessage) {
+    const message = unwrapMessageEvent(eventOrMessage);
     if (!message || typeof message !== "object") return;
     if (message.kind === "response") {
       const entry = pending.get(message.requestId);

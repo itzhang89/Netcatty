@@ -5,7 +5,7 @@ import {
   reduceZmodemTransferState,
   type ZmodemTransferState,
 } from "./hooks/useZmodemTransfer.ts";
-import { resolveZmodemTransferToast } from "./useTerminalEffects.ts";
+import { applyZmodemTransferToast, resolveZmodemTransferToast } from "./useTerminalEffects.ts";
 
 const initialState: ZmodemTransferState = {
   active: false,
@@ -143,4 +143,58 @@ test("ZMODEM progress clears old speed when the next file starts", () => {
 
   assert.equal(secondFileStarted.filename, "second.bin");
   assert.equal(secondFileStarted.bytesPerSecond, null);
+});
+
+test("ZMODEM toast application calls success and error once per transfer", () => {
+  const successCalls: Array<[string, string | undefined]> = [];
+  const errorCalls: Array<[string, string | undefined]> = [];
+  const toast = {
+    success: (message: string, title?: string) => successCalls.push([message, title]),
+    error: (message: string, title?: string) => errorCalls.push([message, title]),
+  };
+  const toastedRef = { current: false };
+
+  applyZmodemTransferToast({
+    active: false,
+    completed: true,
+    transferType: "upload",
+    filename: "large.bin",
+    error: null,
+  }, toastedRef, toast);
+
+  assert.deepEqual(successCalls, [["Uploaded: large.bin", "ZMODEM"]]);
+  assert.deepEqual(errorCalls, []);
+  assert.equal(toastedRef.current, true);
+
+  applyZmodemTransferToast({
+    active: false,
+    completed: true,
+    transferType: "upload",
+    filename: "large.bin",
+    error: null,
+  }, toastedRef, toast);
+
+  assert.deepEqual(successCalls, [["Uploaded: large.bin", "ZMODEM"]]);
+  assert.deepEqual(errorCalls, []);
+
+  applyZmodemTransferToast({
+    active: true,
+    completed: false,
+    transferType: "download",
+    filename: null,
+    error: null,
+  }, toastedRef, toast);
+  assert.equal(toastedRef.current, false);
+
+  applyZmodemTransferToast({
+    active: false,
+    completed: false,
+    transferType: "download",
+    filename: "large.bin",
+    error: "Remote closed the transfer",
+  }, toastedRef, toast);
+
+  assert.deepEqual(successCalls, [["Uploaded: large.bin", "ZMODEM"]]);
+  assert.deepEqual(errorCalls, [["Remote closed the transfer", "ZMODEM"]]);
+  assert.equal(toastedRef.current, true);
 });
