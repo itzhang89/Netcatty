@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { SessionOutputBuffer, tryMatch } = require("./sessionOutputBuffer.cjs");
-const { SHELL_PROMPT_END_REGEX } = require("./shellPromptPatterns.cjs");
+const { SHELL_PROMPT_END_REGEX, shellPromptPatterns } = require("./shellPromptPatterns.cjs");
 const { stepsToJavaScript } = require("./scriptCodegen.cjs");
 
 test("tryMatch finds substring patterns", () => {
@@ -87,6 +87,83 @@ test("SessionOutputBuffer waitFor ignores stale prompt before cursor", async () 
 
   buffer.append("ls output\nuser@host:~$ ");
   assert.equal(await second, "$ ");
+});
+
+test("SessionOutputBuffer markCurrentOutputConsumed prevents startup text from matching", async () => {
+  const buffer = new SessionOutputBuffer("s1");
+  buffer.append("previous deploy READY\nuser@host:~$ ");
+  buffer.markCurrentOutputConsumed({ preserveTailPatterns: shellPromptPatterns() });
+
+  const pending = buffer.waitFor("READY", 200);
+  let resolvedEarly = false;
+  void pending.then(() => {
+    resolvedEarly = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(resolvedEarly, false);
+
+  buffer.append("fresh READY\n");
+  assert.equal(await pending, "READY");
+});
+
+test("SessionOutputBuffer markCurrentOutputConsumed preserves the startup prompt once", async () => {
+  const buffer = new SessionOutputBuffer("s1");
+  buffer.append("root@host:~# ");
+  buffer.markCurrentOutputConsumed({ preserveTailPatterns: shellPromptPatterns() });
+
+  assert.equal(
+    await buffer.waitForAny(
+      shellPromptPatterns(),
+      1000,
+      undefined,
+      { allowPreservedTailMatch: true },
+    ),
+    0,
+  );
+
+  const second = buffer.waitForAny(shellPromptPatterns(), 200);
+  let resolvedEarly = false;
+  void second.then(() => {
+    resolvedEarly = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(resolvedEarly, false);
+
+  buffer.append("root@host:~# ");
+  assert.equal(await second, 0);
+});
+
+test("SessionOutputBuffer normal waitForAny does not consume preserved startup prompts", async () => {
+  const buffer = new SessionOutputBuffer("s1");
+  buffer.append("previous deploy READY\nuser@host:~$ ");
+  buffer.markCurrentOutputConsumed({ preserveTailPatterns: shellPromptPatterns() });
+
+  const pending = buffer.waitForAny(["READY", ...shellPromptPatterns()], 200);
+  let resolvedEarly = false;
+  void pending.then(() => {
+    resolvedEarly = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(resolvedEarly, false);
+
+  buffer.append("READY\n");
+  assert.equal(await pending, 0);
+});
+
+test("SessionOutputBuffer preserved prompt can be consumed explicitly for waitForPrompt", async () => {
+  const buffer = new SessionOutputBuffer("s1");
+  buffer.append("previous deploy READY\nuser@host:~$ ");
+  buffer.markCurrentOutputConsumed({ preserveTailPatterns: shellPromptPatterns() });
+
+  assert.equal(
+    await buffer.waitForAny(
+      ["READY", ...shellPromptPatterns()],
+      1000,
+      undefined,
+      { allowPreservedTailMatch: true },
+    ),
+    2,
+  );
 });
 
 test("stepsToJavaScript sends sensitive prompt result", () => {

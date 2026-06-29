@@ -3,6 +3,10 @@ const test = require("node:test");
 
 const scriptBridge = require("./scriptBridge.cjs");
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 test("script run writes through terminal worker manager when enabled", async () => {
   const handlers = new Map();
   const workerSends = [];
@@ -260,4 +264,154 @@ test("script run uses renderer sessionMeta when main-process session map is empt
   const finalRun = sentRunUpdates.at(-1).find((run) => run.scriptId === "renderer-meta");
   assert.equal(finalRun.status, "completed");
   assert.match(finalRun.logs.map((entry) => entry.message).join("\n"), /10\.0\.0\.1@root/);
+});
+
+test("script waitFor ignores keywords from the startup screen snapshot until new output arrives", async () => {
+  const handlers = new Map();
+  const sentRunUpdates = [];
+  const sessionId = "session-stale-startup-output";
+
+  scriptBridge.removeSessionBuffer(sessionId);
+  scriptBridge.init({
+    sessions: new Map(),
+    electronModule: {
+      app: {
+        getVersion: () => "test",
+        getPath: () => process.cwd(),
+      },
+      webContents: {
+        fromId: () => null,
+      },
+    },
+    terminalBridge: {
+      writeToSession() {},
+    },
+    terminalWorkerManager: null,
+    getMainWindow: () => ({
+      webContents: {
+        id: 1,
+        send(channel, payload) {
+          if (channel === "netcatty:script:runs-updated") {
+            sentRunUpdates.push(payload.runs);
+          }
+          if (channel === "netcatty:script:screen-snapshot-request") {
+            setImmediate(() => {
+              handlers.get("netcatty:script:screen-snapshot-response")({}, {
+                requestId: payload.requestId,
+                snapshot: {
+                  rows: 24,
+                  cols: 80,
+                  currentRow: 1,
+                  lines: [
+                    "old deployment READY marker",
+                    "user@host:~$ ",
+                  ],
+                },
+              });
+            });
+          }
+        },
+      },
+    }),
+  });
+  scriptBridge.registerHandlers({
+    handle(channel, handler) {
+      handlers.set(channel, handler);
+    },
+  });
+
+  const runPromise = handlers.get("netcatty:script:run")({}, {
+    scriptId: "stale-output",
+    scriptLabel: "Stale output",
+    sessionId,
+    content: `
+      const value = await nct.screen.waitFor('READY', 1000);
+      nct.log('matched ' + value);
+    `,
+    permissionMode: "auto",
+  });
+
+  await delay(50);
+  const earlyRun = sentRunUpdates.at(-1)?.find((run) => run.scriptId === "stale-output");
+  assert.notEqual(earlyRun?.status, "completed");
+  assert.doesNotMatch(
+    (earlyRun?.logs || []).map((entry) => entry.message).join("\n"),
+    /matched READY/,
+  );
+
+  scriptBridge.appendSessionOutput(sessionId, "fresh READY\n");
+  await runPromise;
+
+  const finalRun = sentRunUpdates.at(-1).find((run) => run.scriptId === "stale-output");
+  assert.equal(finalRun.status, "completed");
+  assert.match(finalRun.logs.map((entry) => entry.message).join("\n"), /matched READY/);
+  scriptBridge.removeSessionBuffer(sessionId);
+});
+
+test("script waitForPrompt can still use the current startup prompt", async () => {
+  const handlers = new Map();
+  const sentRunUpdates = [];
+  const sessionId = "session-startup-prompt";
+
+  scriptBridge.removeSessionBuffer(sessionId);
+  scriptBridge.init({
+    sessions: new Map(),
+    electronModule: {
+      app: {
+        getVersion: () => "test",
+        getPath: () => process.cwd(),
+      },
+      webContents: {
+        fromId: () => null,
+      },
+    },
+    terminalBridge: {
+      writeToSession() {},
+    },
+    terminalWorkerManager: null,
+    getMainWindow: () => ({
+      webContents: {
+        id: 1,
+        send(channel, payload) {
+          if (channel === "netcatty:script:runs-updated") {
+            sentRunUpdates.push(payload.runs);
+          }
+          if (channel === "netcatty:script:screen-snapshot-request") {
+            setImmediate(() => {
+              handlers.get("netcatty:script:screen-snapshot-response")({}, {
+                requestId: payload.requestId,
+                snapshot: {
+                  rows: 24,
+                  cols: 80,
+                  currentRow: 0,
+                  lines: ["root@host:~# "],
+                },
+              });
+            });
+          }
+        },
+      },
+    }),
+  });
+  scriptBridge.registerHandlers({
+    handle(channel, handler) {
+      handlers.set(channel, handler);
+    },
+  });
+
+  await handlers.get("netcatty:script:run")({}, {
+    scriptId: "startup-prompt",
+    scriptLabel: "Startup prompt",
+    sessionId,
+    content: `
+      const index = await nct.screen.waitForPrompt(1000);
+      nct.log('prompt index ' + index);
+    `,
+    permissionMode: "auto",
+  });
+
+  const finalRun = sentRunUpdates.at(-1).find((run) => run.scriptId === "startup-prompt");
+  assert.equal(finalRun.status, "completed");
+  assert.match(finalRun.logs.map((entry) => entry.message).join("\n"), /prompt index/);
+  scriptBridge.removeSessionBuffer(sessionId);
 });

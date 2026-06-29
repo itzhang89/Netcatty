@@ -39,12 +39,59 @@ function tryMatch(text, pattern) {
 
 function tryMatchWithEnd(text, pattern) {
   const regex = compilePattern(pattern);
+  if (typeof regex.lastIndex === "number") regex.lastIndex = 0;
   const match = regex.exec(text);
   if (!match || match.index === undefined) return null;
   return {
     value: match[0],
     endOffset: match.index + match[0].length,
   };
+}
+
+function findFreshTailMatchAny(text, patterns) {
+  for (let index = 0; index < patterns.length; index += 1) {
+    const pattern = patterns[index];
+    let offset = 0;
+    while (offset <= text.length) {
+      const matched = tryMatchWithEnd(text.slice(offset), pattern);
+      if (matched === null) break;
+      const absoluteEnd = offset + matched.endOffset;
+      if (isFreshTailMatch(text.length, absoluteEnd)) {
+        return {
+          index,
+          matched: {
+            value: matched.value,
+            endOffset: absoluteEnd,
+          },
+        };
+      }
+      offset = Math.max(absoluteEnd, offset + 1);
+    }
+  }
+  return null;
+}
+
+function findMatchingPreservedTailMatch(text, patterns, preserved) {
+  for (let index = 0; index < patterns.length; index += 1) {
+    const pattern = patterns[index];
+    let offset = 0;
+    while (offset <= text.length) {
+      const matched = tryMatchWithEnd(text.slice(offset), pattern);
+      if (matched === null) break;
+      const absoluteEnd = offset + matched.endOffset;
+      if (absoluteEnd === preserved.endOffset && matched.value === preserved.value) {
+        return {
+          index,
+          matched: {
+            value: matched.value,
+            endOffset: absoluteEnd,
+          },
+        };
+      }
+      offset = Math.max(absoluteEnd, offset + 1);
+    }
+  }
+  return null;
 }
 
 class SessionOutputBuffer {
@@ -55,10 +102,12 @@ class SessionOutputBuffer {
     this.totalLength = 0;
     this.scanOffset = 0;
     this.waiters = [];
+    this.preservedTailMatch = null;
   }
 
   append(data) {
     if (!data) return;
+    this.preservedTailMatch = null;
     this.chunks.push(String(data));
     this.totalLength += this.chunks[this.chunks.length - 1].length;
     while (this.totalLength > this.maxSize && this.chunks.length > 1) {
@@ -115,10 +164,46 @@ class SessionOutputBuffer {
     this.scanOffset = Math.min(absoluteEnd, this.getText().length);
   }
 
+  markCurrentOutputConsumed(options = {}) {
+    const text = this.getText();
+    this.scanOffset = text.length;
+    this.preservedTailMatch = null;
+
+    const preserveTailPatterns = Array.isArray(options.preserveTailPatterns)
+      ? options.preserveTailPatterns
+      : [];
+    if (preserveTailPatterns.length === 0 || text.length === 0) return;
+
+    const fresh = findFreshTailMatchAny(text, preserveTailPatterns);
+    if (fresh === null) return;
+    this.preservedTailMatch = {
+      textLength: text.length,
+      value: fresh.matched.value,
+      endOffset: fresh.matched.endOffset,
+    };
+  }
+
+  consumePreservedTailMatchAny(patterns) {
+    const preserved = this.preservedTailMatch;
+    if (!preserved) return null;
+    const text = this.getText();
+    if (text.length !== preserved.textLength) {
+      this.preservedTailMatch = null;
+      return null;
+    }
+
+    const fresh = findMatchingPreservedTailMatch(text, patterns, preserved);
+    if (fresh === null) return null;
+
+    this.preservedTailMatch = null;
+    return fresh;
+  }
+
   clear() {
     this.chunks = [];
     this.totalLength = 0;
     this.scanOffset = 0;
+    this.preservedTailMatch = null;
   }
 
   flushWaiters() {
@@ -185,9 +270,15 @@ class SessionOutputBuffer {
     this.waiters = [];
   }
 
-  async waitForAny(patterns, timeoutMs = 30000, shouldAbort) {
+  async waitForAny(patterns, timeoutMs = 30000, shouldAbort, options = {}) {
     if (!Array.isArray(patterns) || patterns.length === 0) {
       throw new TypeError("waitForAny requires a non-empty patterns array");
+    }
+    if (options.allowPreservedTailMatch === true) {
+      const preserved = this.consumePreservedTailMatchAny(patterns);
+      if (preserved !== null) {
+        return preserved.index;
+      }
     }
     const fresh = this.consumeFreshPendingMatchAny(patterns);
     if (fresh !== null) {
@@ -204,6 +295,17 @@ class SessionOutputBuffer {
         timer: null,
         interval: null,
         check: () => {
+          if (options.allowPreservedTailMatch === true) {
+            const preserved = this.consumePreservedTailMatchAny(patterns);
+            if (preserved !== null) {
+              clearTimeout(waiter.timer);
+              if (waiter.interval) clearInterval(waiter.interval);
+              if (waiter.abortInterval) clearInterval(waiter.abortInterval);
+              this.waiters = this.waiters.filter((entry) => entry.custom !== waiter);
+              resolve(preserved.index);
+              return true;
+            }
+          }
           const fresh = this.consumeFreshPendingMatchAny(patterns);
           if (fresh !== null) {
             this.advanceScanOffset(fresh.matched.endOffset);
@@ -255,6 +357,7 @@ class SessionOutputBuffer {
     this.chunks = [];
     this.totalLength = 0;
     this.scanOffset = 0;
+    this.preservedTailMatch = null;
   }
 }
 

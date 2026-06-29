@@ -117,6 +117,7 @@ function createScriptRuntime(deps) {
           shellPromptPatterns(),
           timeoutMs,
           () => Boolean(deps.isAborted?.()),
+          { allowPreservedTailMatch: true },
         );
       } catch (err) {
         if (!String(err?.message || err).includes("timed out")) {

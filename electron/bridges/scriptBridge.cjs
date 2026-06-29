@@ -9,6 +9,7 @@ const {
   getOrCreateBuffer,
   removeSessionBuffer,
 } = require("../scripts/sessionOutputBuffer.cjs");
+const { shellPromptPatterns } = require("../scripts/shellPromptPatterns.cjs");
 const { addTerminalDataTap } = require("../bridges/emitTerminalSessionData.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 
@@ -260,11 +261,12 @@ function showWaitForTimeoutDialog(pattern, timeoutMs) {
   );
 }
 
-function syncOutputBufferFromSnapshot(sessionId) {
-  return requestScreenSnapshot(sessionId).then((snapshot) => {
+async function syncOutputBufferFromSnapshot(sessionId) {
+  const buffer = getOrCreateBuffer(sessionId);
+  try {
+    const snapshot = await requestScreenSnapshot(sessionId);
     const screenText = (snapshot.lines || []).join("\n");
     if (!screenText) return;
-    const buffer = getOrCreateBuffer(sessionId);
     const existing = buffer.getText();
     if (!existing) {
       buffer.append(screenText.endsWith("\n") ? screenText : `${screenText}\n`);
@@ -281,7 +283,11 @@ function syncOutputBufferFromSnapshot(sessionId) {
     if (!existing.includes(tail.trim())) {
       buffer.append(tail.startsWith("\n") ? tail : `\n${tail}`);
     }
-  }).catch(() => {});
+  } catch {
+    // Keep startup synchronization best-effort; the current buffer is still baselined below.
+  } finally {
+    buffer.markCurrentOutputConsumed({ preserveTailPatterns: shellPromptPatterns() });
+  }
 }
 
 async function runScriptOnSession({
