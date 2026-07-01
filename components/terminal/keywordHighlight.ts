@@ -55,6 +55,11 @@ interface WrappedBlockContext {
 
 type WrappedBlockCacheEntry = WrappedBlockContext | null;
 
+interface WrappedBlockScanCache {
+  contexts: Map<number, WrappedBlockCacheEntry>;
+  cappedMiss: DirtyLineSegment | null;
+}
+
 /** Shared empty array for non-matching lines to avoid per-call allocations. */
 const EMPTY_RANGES: readonly CachedDecorationRange[] = Object.freeze([]);
 
@@ -1025,7 +1030,10 @@ export class KeywordHighlighter implements IDisposable {
   private processLineRange(start: number, end: number, cursorAbsoluteY: number) {
     if (end < start) return;
     const buffer = this.term.buffer.active;
-    const wrappedBlockCache = new Map<number, WrappedBlockCacheEntry>();
+    const wrappedBlockCache: WrappedBlockScanCache = {
+      contexts: new Map<number, WrappedBlockCacheEntry>(),
+      cappedMiss: null,
+    };
     const pressure = getTerminalOutputPressure(this.term);
     for (let lineY = start; lineY <= end; lineY++) {
       const line = buffer.getLine(lineY);
@@ -1105,20 +1113,20 @@ export class KeywordHighlighter implements IDisposable {
     return !!nextLine?.isWrapped;
   }
 
-  private findWrappedBlockStart(buffer: IBuffer, lineY: number): number {
+  private findWrappedBlockStart(buffer: IBuffer, lineY: number): { startY: number; cappedRange?: DirtyLineSegment } {
     let startY = lineY;
     let scannedRows = 0;
     const maxRows = this.getWrappedContextScanRowLimit();
     while (startY > 0) {
       scannedRows += 1;
       if (scannedRows > maxRows) {
-        return -1;
+        return { startY: -1, cappedRange: { start: startY, end: lineY } };
       }
       const current = buffer.getLine(startY);
       if (!current?.isWrapped) break;
       startY -= 1;
     }
-    return startY;
+    return { startY };
   }
 
   private getWrappedContextScanRowLimit(): number {
@@ -1161,14 +1169,22 @@ export class KeywordHighlighter implements IDisposable {
   private getWrappedContext(
     buffer: IBuffer,
     lineY: number,
-    cache: Map<number, WrappedBlockCacheEntry>,
+    line: IBufferLine,
+    cache: WrappedBlockScanCache,
   ): { logicalLineText: string; lineStart: number; lineEnd: number } | null {
-    const startY = this.findWrappedBlockStart(buffer, lineY);
-    if (startY < 0) return null;
-    if (!cache.has(startY)) {
-      cache.set(startY, this.buildWrappedBlockContext(buffer, startY));
+    if (this.isInCappedWrappedMiss(lineY, line, cache)) {
+      return null;
     }
-    const block = cache.get(startY);
+
+    const { startY, cappedRange } = this.findWrappedBlockStart(buffer, lineY);
+    if (startY < 0) {
+      cache.cappedMiss = cappedRange ?? { start: lineY, end: lineY };
+      return null;
+    }
+    if (!cache.contexts.has(startY)) {
+      cache.contexts.set(startY, this.buildWrappedBlockContext(buffer, startY));
+    }
+    const block = cache.contexts.get(startY);
     if (!block) return null;
     const bounds = block.segmentBounds.get(lineY);
     if (!bounds) return null;
@@ -1179,14 +1195,32 @@ export class KeywordHighlighter implements IDisposable {
     };
   }
 
+  private isInCappedWrappedMiss(
+    lineY: number,
+    line: IBufferLine,
+    cache: WrappedBlockScanCache,
+  ): boolean {
+    const miss = cache.cappedMiss;
+    if (!miss) return false;
+    if (lineY >= miss.start && lineY <= miss.end) return true;
+    if (lineY === miss.end + 1 && line.isWrapped) {
+      miss.end = lineY;
+      return true;
+    }
+    if (lineY > miss.end) {
+      cache.cappedMiss = null;
+    }
+    return false;
+  }
+
   private scanWrappedLine(
     buffer: IBuffer,
     lineY: number,
     line: IBufferLine,
     lineText: string,
-    wrappedBlockCache: Map<number, WrappedBlockCacheEntry>,
+    wrappedBlockCache: WrappedBlockScanCache,
   ): CachedDecorationRange[] {
-    const context = this.getWrappedContext(buffer, lineY, wrappedBlockCache);
+    const context = this.getWrappedContext(buffer, lineY, line, wrappedBlockCache);
     if (!context || context.logicalLineText === lineText) {
       return this.scanLine(line, lineText);
     }

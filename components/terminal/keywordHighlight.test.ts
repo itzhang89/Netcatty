@@ -397,7 +397,7 @@ test("wrapped highlight scanning stops before walking an oversized soft-wrapped 
 
     assert.deepEqual(decorations, []);
     assert.ok(
-      getLineCount() < 40_000,
+      getLineCount() < 3_000,
       `expected capped wrapped scan, got ${getLineCount()} getLine calls`,
     );
   } finally {
