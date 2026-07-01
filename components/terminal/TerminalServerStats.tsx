@@ -77,7 +77,7 @@ export const TerminalServerStats: React.FC<TerminalServerStatsProps> = ({
                     <div className="text-xs space-y-2">
                       <div className="font-medium text-sm mb-2">{t("terminal.serverStats.cpuCores")}</div>
                       {serverStats.cpuPerCore.length > 0 ? (
-                        <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(4, serverStats.cpuPerCore.length)}, 1fr)` }}>
+                        <div className="grid gap-1.5 max-h-[260px] overflow-y-auto pr-1 overscroll-contain" style={{ gridTemplateColumns: `repeat(${Math.min(4, serverStats.cpuPerCore.length)}, 1fr)` }}>
                           {serverStats.cpuPerCore.map((usage, index) => (
                             <div key={index} className="flex flex-col items-center gap-1 min-w-[48px]">
                               <div className="text-[10px] text-muted-foreground">Core {index}</div>
