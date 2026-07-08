@@ -421,19 +421,31 @@ const getTrailingPasswordPromptPrefix = (text: string): string => {
 
 /**
  * Restore sequences already counted in `preserved` can also sit at the start of
- * the trailing password-prefix line (e.g. "stale\n\x1b[?1049lPass"). Strip only
- * when the full preserved string is a real prefix — never peel single chars
+ * the trailing password-prefix line (e.g. "stale\n\x1b[?1049lPass", or multiple
+ * restores "\x1b[?25hstale\n\x1b[?1049lPass"). Strip only complete leading
+ * restore sequences that are a real suffix of `preserved` — never peel chars
  * like the final "l" of "\x1b[?1049l" off "login pass".
  */
 const stripLeadingPreservedOverlap = (
   passwordPending: string,
   preserved: string,
 ): string => {
-  if (!passwordPending || !preserved) return passwordPending;
-  if (passwordPending.startsWith(preserved)) {
-    return passwordPending.slice(preserved.length);
+  let pending = passwordPending;
+  let keep = preserved;
+  if (!pending || !keep) return pending;
+  if (pending.startsWith(keep)) return pending.slice(keep.length);
+
+  while (pending && keep) {
+    TERMINAL_STATE_RESTORE_SEQUENCE_PATTERN.lastIndex = 0;
+    const match = TERMINAL_STATE_RESTORE_SEQUENCE_PATTERN.exec(pending);
+    TERMINAL_STATE_RESTORE_SEQUENCE_PATTERN.lastIndex = 0;
+    if (!match || match.index !== 0) break;
+    const seq = match[0];
+    if (!shouldPreserveTerminalStateRestore(seq) || !keep.endsWith(seq)) break;
+    pending = pending.slice(seq.length);
+    keep = keep.slice(0, -seq.length);
   }
-  return passwordPending;
+  return pending;
 };
 
 /**

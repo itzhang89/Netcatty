@@ -187,6 +187,36 @@ test("excludes preserved restore controls from held password prefixes", () => {
   );
 });
 
+test("excludes the last of multiple preserved restores from held password prefixes", () => {
+  const session = {};
+
+  armTerminalInterruptOutputGate(session, {
+    now: 3855,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "\x1b[?25hstale\n\x1b[?1049lPass", { now: 3856 }),
+    {
+      accepted: true,
+      data: "\x1b[?25h\x1b[?1049l",
+      droppedBytes: "stale\n".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptOutput(session, "word: ", { now: 3857 }),
+    {
+      accepted: true,
+      data: "Password: ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("does not peel preserved restore suffix chars from a later password prefix", () => {
   const session = {};
 

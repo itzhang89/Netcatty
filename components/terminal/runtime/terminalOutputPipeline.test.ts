@@ -547,6 +547,35 @@ test("interrupt display drain excludes preserved restore from held password pref
   );
 });
 
+test("interrupt display drain excludes last of multiple restores from password prefixes", () => {
+  const term = createFakeTerm();
+  armTerminalInterruptDisplayGate(term, {
+    now: 6255,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+  });
+
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "\x1b[?25hstale\n\x1b[?1049lPass", { now: 6256 }),
+    {
+      accepted: true,
+      data: "\x1b[?25h\x1b[?1049l",
+      droppedBytes: "stale\n".length,
+      reason: "draining",
+    },
+  );
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, "word: ", { now: 6257 }),
+    {
+      accepted: true,
+      data: "Password: ",
+      droppedBytes: 0,
+      reason: "prompt-gap",
+    },
+  );
+});
+
 test("interrupt display drain does not peel restore suffix from later password prefixes", () => {
   const term = createFakeTerm();
   armTerminalInterruptDisplayGate(term, {
