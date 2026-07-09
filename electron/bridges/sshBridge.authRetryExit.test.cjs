@@ -97,6 +97,23 @@ function loadBridgeWithAuthRetryMocks(t, options = {}) {
           this.emit("error", err);
           return;
         }
+        if (eventName === "socket-error") {
+          const err = new Error("Connection reset by auth-bastion.example.com");
+          err.level = "client-socket";
+          this.emit("error", err);
+          return;
+        }
+        if (eventName === "permission-denied-socket-error") {
+          const err = new Error("Permission denied opening channel to auth-bastion.example.com");
+          err.level = "client-socket";
+          this.emit("error", err);
+          return;
+        }
+        if (eventName === "too-many-auth") {
+          const err = new Error("Too many authentication failures");
+          this.emit("error", err);
+          return;
+        }
         if (eventName === "ready") {
           this.emit("connect");
           this.emit("handshake");
@@ -374,6 +391,245 @@ test("jump-host auth failure does not emit exit before encrypted-key retry succe
       && message.payload.sessionId === "jump-retry-session"
     )),
     false,
+  );
+});
+
+test("jump-host auth failure is attributed to the failing jump host", async (t) => {
+  const { bridge } = loadBridgeWithAuthRetryMocks(t, {
+    connectEvents: ["auth-error"],
+    encryptedKeys: [],
+  });
+  const ipcMain = makeIpcMain();
+  bridge.init({ sessions: new Map(), electronModule: {} });
+  bridge.registerHandlers(ipcMain);
+  const start = ipcMain.handlers.get("netcatty:start");
+
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "jump-auth-failed-session",
+        hostname: "target.example",
+        username: "target-user",
+        port: 22,
+        knownHosts: [],
+        jumpHosts: [{
+          hostname: "jump.example",
+          username: "jump-user",
+          port: 22,
+          label: "Bastion",
+        }],
+      },
+    ),
+    (err) => {
+      assert.equal(err.isJumpHostAuthError, true);
+      assert.equal(err.jumpHostLabel, "Bastion");
+      assert.match(err.message, /Jump host authentication failed for "Bastion"/);
+      return true;
+    },
+  );
+});
+
+test("jump-host too-many-auth failures are attributed to the failing jump host", async (t) => {
+  const { bridge } = loadBridgeWithAuthRetryMocks(t, {
+    connectEvents: ["too-many-auth"],
+    encryptedKeys: [],
+  });
+  const ipcMain = makeIpcMain();
+  bridge.init({ sessions: new Map(), electronModule: {} });
+  bridge.registerHandlers(ipcMain);
+  const start = ipcMain.handlers.get("netcatty:start");
+
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "jump-too-many-auth-session",
+        hostname: "target.example",
+        username: "target-user",
+        port: 22,
+        knownHosts: [],
+        jumpHosts: [{
+          hostname: "jump.example",
+          username: "jump-user",
+          port: 22,
+          label: "Bastion",
+        }],
+      },
+    ),
+    (err) => {
+      assert.equal(err.isJumpHostAuthError, true);
+      assert.equal(err.jumpHostLabel, "Bastion");
+      assert.match(err.message, /Jump host authentication failed for "Bastion": Too many authentication failures/);
+      return true;
+    },
+  );
+});
+
+test("jump-host auth attribution survives encrypted-key retry failure", async (t) => {
+  const { bridge } = loadBridgeWithAuthRetryMocks(t, {
+    connectEvents: ["auth-error", "auth-error"],
+    encryptedKeys: [
+      {
+        keyPath: "/Users/test/.ssh/id_ed25519",
+        keyName: "id_ed25519",
+        isEncrypted: true,
+      },
+    ],
+    passphraseResult: {
+      cancelled: false,
+      keys: [
+        {
+          keyPath: "/Users/test/.ssh/id_ed25519",
+          keyName: "id_ed25519",
+          privateKey: "UNLOCKED_PRIVATE_KEY",
+          passphrase: "secret",
+        },
+      ],
+    },
+  });
+  const ipcMain = makeIpcMain();
+  bridge.init({ sessions: new Map(), electronModule: {} });
+  bridge.registerHandlers(ipcMain);
+  const start = ipcMain.handlers.get("netcatty:start");
+
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "jump-auth-retry-failed-session",
+        hostname: "target.example",
+        username: "target-user",
+        port: 22,
+        knownHosts: [],
+        jumpHosts: [{
+          hostname: "jump.example",
+          username: "jump-user",
+          port: 22,
+          label: "Bastion",
+        }],
+      },
+    ),
+    (err) => {
+      assert.equal(err.isJumpHostAuthError, true);
+      assert.equal(err.jumpHostLabel, "Bastion");
+      assert.match(err.message, /Jump host authentication failed for "Bastion"/);
+      return true;
+    },
+  );
+});
+
+test("jump-host socket errors with auth in hostname are not wrapped as auth failures", async (t) => {
+  let passphraseRequests = 0;
+  const { bridge } = loadBridgeWithAuthRetryMocks(t, {
+    connectEvents: ["socket-error"],
+    encryptedKeys: [
+      {
+        keyPath: "/Users/test/.ssh/id_ed25519",
+        keyName: "id_ed25519",
+        isEncrypted: true,
+      },
+    ],
+    onPassphraseRequest: () => {
+      passphraseRequests += 1;
+    },
+  });
+  const ipcMain = makeIpcMain();
+  bridge.init({ sessions: new Map(), electronModule: {} });
+  bridge.registerHandlers(ipcMain);
+  const start = ipcMain.handlers.get("netcatty:start");
+  const sender = makeSender();
+
+  await assert.rejects(
+    start(
+      { sender },
+      {
+        sessionId: "jump-socket-error-session",
+        hostname: "target.example",
+        username: "target-user",
+        port: 22,
+        knownHosts: [],
+        jumpHosts: [{
+          hostname: "auth-bastion.example.com",
+          username: "jump-user",
+          port: 22,
+          label: "Auth Bastion",
+        }],
+      },
+    ),
+    (err) => {
+      assert.equal(err.isAuthError, undefined);
+      assert.equal(err.isJumpHostAuthError, undefined);
+      assert.equal(err.level, "client-socket");
+      assert.equal(err.message, "Connection reset by auth-bastion.example.com");
+      return true;
+    },
+  );
+  assert.equal(passphraseRequests, 0);
+  assert.equal(
+    sender.sent.some((message) => (
+      message.channel === "netcatty:exit"
+      && message.payload.sessionId === "jump-socket-error-session"
+      && message.payload.error === "Connection reset by auth-bastion.example.com"
+    )),
+    true,
+  );
+});
+
+test("jump-host permission-denied socket errors are not wrapped as auth failures", async (t) => {
+  let passphraseRequests = 0;
+  const { bridge } = loadBridgeWithAuthRetryMocks(t, {
+    connectEvents: ["permission-denied-socket-error"],
+    encryptedKeys: [
+      {
+        keyPath: "/Users/test/.ssh/id_ed25519",
+        keyName: "id_ed25519",
+        isEncrypted: true,
+      },
+    ],
+    onPassphraseRequest: () => {
+      passphraseRequests += 1;
+    },
+  });
+  const ipcMain = makeIpcMain();
+  bridge.init({ sessions: new Map(), electronModule: {} });
+  bridge.registerHandlers(ipcMain);
+  const start = ipcMain.handlers.get("netcatty:start");
+  const sender = makeSender();
+
+  await assert.rejects(
+    start(
+      { sender },
+      {
+        sessionId: "jump-permission-denied-socket-error-session",
+        hostname: "target.example",
+        username: "target-user",
+        port: 22,
+        knownHosts: [],
+        jumpHosts: [{
+          hostname: "auth-bastion.example.com",
+          username: "jump-user",
+          port: 22,
+          label: "Auth Bastion",
+        }],
+      },
+    ),
+    (err) => {
+      assert.equal(err.isAuthError, undefined);
+      assert.equal(err.isJumpHostAuthError, undefined);
+      assert.equal(err.level, "client-socket");
+      assert.equal(err.message, "Permission denied opening channel to auth-bastion.example.com");
+      return true;
+    },
+  );
+  assert.equal(passphraseRequests, 0);
+  assert.equal(
+    sender.sent.some((message) => (
+      message.channel === "netcatty:exit"
+      && message.payload.sessionId === "jump-permission-denied-socket-error-session"
+      && message.payload.error === "Permission denied opening channel to auth-bastion.example.com"
+    )),
+    true,
   );
 });
 

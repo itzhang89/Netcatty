@@ -17,6 +17,16 @@ const {
 const SSH_TCP_CONNECT_TIMEOUT_MS = 20000;
 const SSH_AUTH_READY_TIMEOUT_MS = 120000;
 
+function isSshAuthFailure(err) {
+  const message = err?.message?.toLowerCase() || "";
+  return err?.level === "client-authentication" ||
+    message.includes("all configured authentication methods failed") ||
+    message.includes("authentication failed") ||
+    message.includes("too many authentication failures") ||
+    /permission denied\s*\(/.test(message) ||
+    message.includes("no authentication methods available");
+}
+
 function createStartSessionApi(ctx) {
   with (ctx) {
     /**
@@ -1274,10 +1284,7 @@ function createStartSessionApi(ctx) {
 
             const contents = event.sender;
 
-            const isAuthError = err.message?.toLowerCase().includes('authentication') ||
-              err.message?.toLowerCase().includes('auth') ||
-              err.message?.toLowerCase().includes('password') ||
-              err.level === 'client-authentication';
+            const isAuthError = isSshAuthFailure(err);
 
             // Clear cached auth method on auth failure so next attempt tries all methods
             if (isAuthError) {
@@ -1461,10 +1468,7 @@ function createStartSessionApi(ctx) {
         });
       } catch (err) {
         console.error("[Chain] SSH chain connection error:", err.message);
-        const isAuthError = err.message?.toLowerCase().includes('authentication') ||
-          err.message?.toLowerCase().includes('auth') ||
-          err.message?.toLowerCase().includes('password') ||
-          err.level === 'client-authentication';
+        const isAuthError = isSshAuthFailure(err);
         const suppressPreShellAuthExit = Boolean(options._suppressPreShellAuthExit && isAuthError);
         if (!suppressPreShellAuthExit) {
           const contents = event.sender;

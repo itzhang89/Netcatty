@@ -50,6 +50,22 @@ import {
 import { hasConnectionPassedTcpDial } from "../connectionTimeouts";
 
 const TELNET_SESSION_REPLACED_ERROR = "Telnet session start was replaced";
+const JUMP_HOST_AUTH_FAILED_PREFIX = "Jump host authentication failed";
+
+const isAuthFailureMessage = (message: string): boolean => {
+  const normalized = message.toLowerCase();
+  return normalized.includes("all configured authentication methods failed") ||
+    normalized.includes("authentication failed") ||
+    normalized.includes("too many authentication failures") ||
+    /permission denied\s*\(/.test(normalized) ||
+    normalized.includes("no authentication methods available");
+};
+
+const isJumpHostAuthError = (err: unknown, message: string): boolean =>
+  Boolean(
+    err instanceof Error &&
+    (err as Error & { isJumpHostAuthError?: boolean }).isJumpHostAuthError,
+  ) || message.includes(JUMP_HOST_AUTH_FAILED_PREFIX);
 
 export const getMissingChainHostIds = (
   host: Host,
@@ -189,13 +205,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
     const isAuthError = (err: unknown): boolean => {
       if (!(err instanceof Error)) return false;
-      const msg = err.message.toLowerCase();
-      return (
-        msg.includes("authentication") ||
-        msg.includes("auth") ||
-        msg.includes("password") ||
-        msg.includes("permission denied")
-      );
+      return isAuthFailureMessage(err.message);
     };
 
     if (ctx.host.proxyProfileId && !ctx.host.proxyConfig) {
@@ -618,7 +628,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const message = err instanceof Error ? err.message : String(err);
       const authError = isAuthError(err);
 
-      if (authError) {
+      if (isJumpHostAuthError(err, message)) {
+        ctx.setNeedsAuth(false);
+        ctx.setAuthRetryMessage(null);
+        ctx.setAuthPassword("");
+        ctx.setError(message);
+        writeTerminalLine(ctx, term, `\r\n[Failed to start SSH: ${message}]`);
+        ctx.updateStatus("disconnected");
+      } else if (authError) {
         ctx.setError(null);
         ctx.setNeedsAuth(true);
         ctx.setAuthRetryMessage(
@@ -634,6 +651,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         ]);
         ctx.setStatus("connecting");
       } else {
+        ctx.setNeedsAuth(false);
+        ctx.setAuthRetryMessage(null);
+        ctx.setAuthPassword("");
         ctx.setError(message);
         writeTerminalLine(ctx, term, `\r\n[Failed to start SSH: ${message}]`);
         ctx.updateStatus("disconnected");

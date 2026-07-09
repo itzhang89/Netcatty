@@ -754,6 +754,12 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         conn.once('error', (err) => {
           console.error(`[Chain] Hop ${i + 1}/${totalHops}: ${hopLabel} error:`, err.message);
           sendProgress(i + 1, totalHops + 1, hopLabel, 'error', err.message);
+          if (isChainAuthError(err)) {
+            err.isJumpHostAuthError = true;
+            err.jumpHostLabel = hopLabel;
+            err.jumpHostHostname = jump.hostname;
+            err.message = `Jump host authentication failed for "${hopLabel}": ${err.message}`;
+          }
           reject(err);
         });
         conn.once('timeout', () => {
@@ -947,11 +953,23 @@ async function generateKeyPair(event, options) {
  * Wrapper for SSH session handler to suppress noisy auth error stack traces
  * Auth failures are expected when fallback to password is available
  */
+function isAuthFailureMessage(message) {
+  const normalized = message?.toLowerCase() || '';
+  return normalized.includes('all configured authentication methods failed') ||
+    normalized.includes('authentication failed') ||
+    normalized.includes('too many authentication failures') ||
+    /permission denied\s*\(/.test(normalized) ||
+    normalized.includes('no authentication methods available');
+}
+
 function isStartAuthError(err) {
-  return err?.message?.toLowerCase().includes('authentication') ||
-    err?.message?.toLowerCase().includes('auth') ||
-    err?.message?.toLowerCase().includes('password') ||
-    err?.level === 'client-authentication';
+  return err?.level === 'client-authentication' ||
+    isAuthFailureMessage(err?.message);
+}
+
+function isChainAuthError(err) {
+  return err?.level === 'client-authentication' ||
+    isAuthFailureMessage(err?.message);
 }
 
 function canRetryWithEncryptedDefaultKeys(options) {
@@ -1070,6 +1088,11 @@ async function startSSHSessionWrapper(event, options) {
                 const authError = new Error(retryErr.message);
                 authError.level = 'client-authentication';
                 authError.isAuthError = true;
+                if (retryErr.isJumpHostAuthError) {
+                  authError.isJumpHostAuthError = true;
+                  authError.jumpHostLabel = retryErr.jumpHostLabel;
+                  authError.jumpHostHostname = retryErr.jumpHostHostname;
+                }
                 throw authError;
               }
               // Wrap non-auth retry errors as connection errors to prevent crash
@@ -1093,6 +1116,11 @@ async function startSSHSessionWrapper(event, options) {
       const authError = new Error(err.message);
       authError.level = 'client-authentication';
       authError.isAuthError = true;
+      if (err.isJumpHostAuthError) {
+        authError.isJumpHostAuthError = true;
+        authError.jumpHostLabel = err.jumpHostLabel;
+        authError.jumpHostHostname = err.jumpHostHostname;
+      }
       throw authError;
     }
 

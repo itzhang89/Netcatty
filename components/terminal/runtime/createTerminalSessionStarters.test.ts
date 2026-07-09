@@ -289,6 +289,206 @@ test("startSSH resolves jump host proxy credentials from an identity", async () 
   });
 });
 
+test("startSSH shows jump-host auth failures without opening target auth retry", async () => {
+  let error = "";
+  let needsAuth = false;
+  let retryMessage: string | null = "previous retry";
+  let status = "";
+  const progressLogs: string[] = [];
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => {
+      const err = new Error('Jump host authentication failed for "Bastion": All configured authentication methods failed');
+      (err as Error & { isJumpHostAuthError?: boolean }).isJumpHostAuthError = true;
+      throw err;
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      hostChain: { hostIds: ["jump-1"] },
+    },
+    resolvedChainHosts: [{
+      id: "jump-1",
+      label: "Bastion",
+      hostname: "bastion.example.test",
+      username: "jump",
+      password: "wrong-secret",
+    }],
+    setError: (message: string) => { error = message; },
+    setNeedsAuth: (value: boolean) => { needsAuth = value; },
+    setAuthRetryMessage: (message: string | null) => { retryMessage = message; },
+    setStatus: (next: string) => { status = next; },
+    updateStatus: (next: string) => { status = next; },
+    setProgressLogs: (next: string[] | ((prev: string[]) => string[])) => {
+      if (typeof next === "function") {
+        progressLogs.splice(0, progressLogs.length, ...next(progressLogs));
+      } else {
+        progressLogs.splice(0, progressLogs.length, ...next);
+      }
+    },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(needsAuth, false);
+  assert.equal(retryMessage, null);
+  assert.equal(status, "disconnected");
+  assert.match(error, /Jump host authentication failed for "Bastion"/);
+  assert.equal(progressLogs.some((line) => /Authentication failed\. Please try again/.test(line)), false);
+});
+
+test("startSSH recognizes Electron-prefixed jump-host auth failures", async () => {
+  let error = "";
+  let needsAuth = false;
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => {
+      throw new Error(
+        'Error invoking remote method "netcatty:start": Error: Jump host authentication failed for "Bastion": All configured authentication methods failed',
+      );
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    setNeedsAuth: (value: boolean) => { needsAuth = value; },
+    setError: (message: string) => { error = message; },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(needsAuth, false);
+  assert.match(error, /Jump host authentication failed for "Bastion"/);
+});
+
+test("startSSH does not open auth retry for socket errors mentioning auth in hostnames", async () => {
+  let error = "";
+  let needsAuth = false;
+  let retryMessage: string | null = "previous retry";
+  let status = "";
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => {
+      const err = new Error("Connection reset by auth-bastion.example.com");
+      throw err;
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      hostChain: { hostIds: ["jump-1"] },
+    },
+    resolvedChainHosts: [{
+      id: "jump-1",
+      label: "Auth Bastion",
+      hostname: "auth-bastion.example.com",
+      username: "jump",
+      password: "secret",
+    }],
+    setError: (message: string) => { error = message; },
+    setNeedsAuth: (value: boolean) => { needsAuth = value; },
+    setAuthRetryMessage: (message: string | null) => { retryMessage = message; },
+    setStatus: (next: string) => { status = next; },
+    updateStatus: (next: string) => { status = next; },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(needsAuth, false);
+  assert.equal(retryMessage, null);
+  assert.equal(status, "disconnected");
+  assert.equal(error, "Connection reset by auth-bastion.example.com");
+});
+
+test("startSSH does not open auth retry for non-login permission denied errors", async () => {
+  let needsAuth = false;
+  let error = "";
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => {
+      throw new Error("Permission denied opening channel to auth-bastion.example.com");
+    },
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    terminalBackend,
+    setNeedsAuth: (value: boolean) => { needsAuth = value; },
+    setError: (message: string) => { error = message; },
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(needsAuth, false);
+  assert.equal(error, "Permission denied opening channel to auth-bastion.example.com");
+});
+
 test("startSSH rejects missing saved proxy profiles before connecting", async () => {
   let started = false;
   let error = "";
