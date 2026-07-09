@@ -609,6 +609,37 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
     };
   }
 
+  // Complete password prompts resume immediately — including one-chunk prompts
+  // before promptQuietMs, held-prefix completions, and last-line prompts that
+  // arrive after a large stale prefix. Unlike shell prompts, password prompts
+  // often emit nothing further until the user types; dropping them leaves a
+  // blank terminal while the remote waits (#2010). Detect the last-line
+  // password candidate independently of the whole-chunk promptCandidateBytes
+  // cap used for ordinary shell prompts.
+  {
+    const passwordPromptCandidate = getPromptCandidateSuffix(combinedText);
+    if (
+      passwordPromptCandidate
+      && isCompletePasswordPrompt(stripAnsi(passwordPromptCandidate))
+    ) {
+      const droppedPrefix = combinedText.slice(
+        0,
+        combinedText.length - passwordPromptCandidate.length,
+      );
+      const restoreControls = extractTerminalStateRestoreControls(droppedPrefix);
+      const droppedBytes = restoreControls.droppedBytes;
+      gate.droppedBytes += droppedBytes;
+      gate.droppedChunks += droppedBytes > 0 ? 1 : 0;
+      disarmTerminalInterruptOutputGate(session);
+      return {
+        accepted: true,
+        data: `${restoreControls.preserved}${passwordPromptCandidate}`,
+        droppedBytes: withPrefixDrop(droppedBytes),
+        reason: heldPasswordPrefixContinued ? "prompt-gap" : "password-prompt",
+      };
+    }
+  }
+
   if (gate.droppedBytes === 0 && bytes <= gate.promptCandidateBytes) {
     const promptCandidate = getPromptCandidateSuffix(combinedText);
     if (promptCandidate) {
@@ -623,29 +654,6 @@ function filterTerminalInterruptOutput(session, data, options = {}) {
         data: `${restoreControls.preserved}${promptCandidate}`,
         droppedBytes: withPrefixDrop(droppedBytes),
         reason: "prompt-candidate",
-      };
-    }
-  }
-
-  // Complete password prompts resume immediately — including one-chunk prompts
-  // before promptQuietMs, and held-prefix completions on the same line. Unlike
-  // shell prompts, password prompts often emit nothing further until the user
-  // types; dropping them leaves a blank terminal while the remote waits (#2010).
-  // heldPasswordPrefixContinued is retained for clarity/tests around split holds.
-  if (bytes <= gate.promptCandidateBytes) {
-    const promptCandidate = getPromptCandidateSuffix(combinedText);
-    if (promptCandidate && isCompletePasswordPrompt(stripAnsi(promptCandidate))) {
-      const droppedPrefix = combinedText.slice(0, combinedText.length - promptCandidate.length);
-      const restoreControls = extractTerminalStateRestoreControls(droppedPrefix);
-      const droppedBytes = restoreControls.droppedBytes;
-      gate.droppedBytes += droppedBytes;
-      gate.droppedChunks += droppedBytes > 0 ? 1 : 0;
-      disarmTerminalInterruptOutputGate(session);
-      return {
-        accepted: true,
-        data: `${restoreControls.preserved}${promptCandidate}`,
-        droppedBytes: withPrefixDrop(droppedBytes),
-        reason: heldPasswordPrefixContinued ? "prompt-gap" : "password-prompt",
       };
     }
   }

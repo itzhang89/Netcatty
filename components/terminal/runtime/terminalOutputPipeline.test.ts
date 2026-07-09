@@ -1291,6 +1291,32 @@ test("interrupt display drain accepts a fresh one-chunk password prompt before t
   );
 });
 
+test("interrupt display drain accepts a last-line password prompt after a large stale prefix", () => {
+  const term = createFakeTerm();
+  armTerminalInterruptDisplayGate(term, {
+    now: 9120,
+    quietMs: 500,
+    promptQuietMs: 80,
+    maxDrainMs: 2500,
+    promptCandidateBytes: 512,
+  });
+
+  assert.equal(
+    filterTerminalInterruptDisplayOutput(term, "stale\n", { now: 9121 }).accepted,
+    false,
+  );
+  const largeChunk = `${"x".repeat(600)}\n[sudo] password for alice: `;
+  assert.deepEqual(
+    filterTerminalInterruptDisplayOutput(term, largeChunk, { now: 9130 }),
+    {
+      accepted: true,
+      data: "[sudo] password for alice: ",
+      droppedBytes: 601,
+      reason: "password-prompt",
+    },
+  );
+});
+
 test("interrupt display drain does not hold short ASCII trailing letters as password prefixes", () => {
   const term = createFakeTerm();
   armTerminalInterruptDisplayGate(term, {
