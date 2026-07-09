@@ -213,7 +213,7 @@ function SettingsAppearanceTab(props: {
                 type="range"
                 min={50}
                 max={100}
-                step={5}
+                step={1}
                 value={Math.round(windowOpacity * 100)}
                 onChange={(e) => setWindowOpacity(Number(e.target.value) / 100)}
                 className="w-28 accent-primary"
