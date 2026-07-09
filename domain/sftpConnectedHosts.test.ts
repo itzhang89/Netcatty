@@ -99,6 +99,39 @@ test("listSftpConnectedHosts keeps plain SSH sessions even when vault host defau
   assert.equal(result[0]?.sessionId, "s-ssh-deeplink");
 });
 
+test("listSftpConnectedHosts uses the live session endpoint when the vault host was edited", () => {
+  const hostsById = new Map([
+    [
+      "a",
+      host({
+        id: "a",
+        label: "Alpha",
+        hostname: "edited.example.test",
+        username: "bob",
+        port: 2222,
+      }),
+    ],
+  ]);
+  const sessions = [
+    session({
+      id: "s-live",
+      hostId: "a",
+      status: "connected",
+      hostname: "a.example.test",
+      username: "alice",
+      port: 22,
+    }),
+  ];
+
+  const result = listSftpConnectedHosts(sessions, hostsById);
+  assert.equal(result.length, 1);
+  assert.equal(result[0]?.sessionId, "s-live");
+  assert.equal(result[0]?.host.label, "Alpha");
+  assert.equal(result[0]?.host.hostname, "a.example.test");
+  assert.equal(result[0]?.host.username, "alice");
+  assert.equal(result[0]?.host.port, 22);
+});
+
 test("listSftpConnectedHosts skips serial, local, telnet, and disconnected sessions", () => {
   const hosts = [
     host({ id: "ssh", label: "SSH" }),
@@ -153,7 +186,7 @@ test("sftpPickerSessionsEqual ignores title-only changes", () => {
   assert.equal(sftpPickerSessionsEqual(prev, next), true);
 });
 
-test("sftpPickerSessionsEqual detects status, hostId, and transport changes", () => {
+test("sftpPickerSessionsEqual detects status, hostId, transport, and endpoint changes", () => {
   const base = session({ id: "s1", hostId: "a", status: "connected" });
   assert.equal(
     sftpPickerSessionsEqual([base], [session({ id: "s1", hostId: "a", status: "connecting" })]),
@@ -167,6 +200,13 @@ test("sftpPickerSessionsEqual detects status, hostId, and transport changes", ()
     sftpPickerSessionsEqual(
       [base],
       [session({ id: "s1", hostId: "a", status: "connected", moshEnabled: true })],
+    ),
+    false,
+  );
+  assert.equal(
+    sftpPickerSessionsEqual(
+      [base],
+      [session({ id: "s1", hostId: "a", status: "connected", hostname: "other.example.test" })],
     ),
     false,
   );

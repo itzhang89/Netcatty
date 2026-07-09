@@ -9,7 +9,15 @@ export type SftpConnectedHostEntry = {
 /** Fields the SFTP Connected picker cares about from a terminal session. */
 export type SftpPickerSessionFields = Pick<
   TerminalSession,
-  "id" | "hostId" | "protocol" | "status" | "moshEnabled" | "etEnabled"
+  | "id"
+  | "hostId"
+  | "protocol"
+  | "status"
+  | "moshEnabled"
+  | "etEnabled"
+  | "hostname"
+  | "username"
+  | "port"
 >;
 
 /**
@@ -24,6 +32,19 @@ const isReusableSftpSourceSession = (session: SftpPickerSessionFields): boolean 
   // Missing protocol defaults to SSH (same as host picker filtering).
   return true;
 };
+
+/**
+ * Overlay the live session endpoint onto the vault host so SFTP connect +
+ * sourceSessionId reuse matches findReusableSession's endpoint check.
+ * Vault hosts can be edited after the terminal connected; using the edited
+ * host would reject reuse and open a fresh connection to a different target.
+ */
+const hostForLiveSession = (host: Host, session: SftpPickerSessionFields): Host => ({
+  ...host,
+  hostname: session.hostname,
+  username: session.username,
+  port: session.port ?? host.port ?? 22,
+});
 
 /**
  * Compare only picker-relevant session fields so title/cwd/font churn does not
@@ -49,6 +70,9 @@ export const sftpPickerSessionsEqual = (
       || session.status !== other.status
       || Boolean(session.moshEnabled) !== Boolean(other.moshEnabled)
       || Boolean(session.etEnabled) !== Boolean(other.etEnabled)
+      || session.hostname !== other.hostname
+      || session.username !== other.username
+      || (session.port ?? 22) !== (other.port ?? 22)
     ) {
       return false;
     }
@@ -76,7 +100,7 @@ export const listSftpConnectedHosts = (
 
     // Later sessions overwrite earlier ones for the same hostId.
     bestByHostId.set(host.id, {
-      host,
+      host: hostForLiveSession(host, session),
       sessionId: session.id,
       status: "connected",
     });
