@@ -67,3 +67,7 @@ not resolve or accept an older MoshCatty release.
 - **2026-07-11:** Require `moshcatty-0.1.4+` for Windows ConPTY shortcut input;
   keep Mosh sessions on Netcatty's primary terminal screen so highlighting and
   scrollback remain available.
+- **2026-07-11:** Speculative local echo (prediction underlines) lives in
+  MoshCatty (`LocalPredictor`, `MOSH_PREDICTION_DISPLAY`). Prefer
+  `moshcatty-0.1.5+` so high-latency typing matches stock mosh / Termius
+  (Netcatty #2121). Netcatty does not implement prediction in the renderer.

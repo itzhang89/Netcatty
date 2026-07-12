@@ -204,6 +204,18 @@ test("startMoshSession handshake path sends the existing exit event on failure",
   assert.ok(exit);
   assert.equal(exit.payload.sessionId, "mosh-test-session");
   assert.equal(exit.payload.reason, "error");
+  assert.match(
+    String(exit.payload.error || ""),
+    /no MOSH CONNECT/i,
+    "exit payload should name the handshake failure",
+  );
+  const dataChunks = h.sent
+    .filter((evt) => evt.channel === "netcatty:data" || evt.channel === "netcatty:session-data")
+    .map((evt) => String(evt.payload?.data ?? evt.payload ?? ""));
+  assert.ok(
+    dataChunks.some((chunk) => /Mosh handshake failed/i.test(chunk)),
+    "renderer should receive an explicit handshake-failure hint",
+  );
 });
 
 test("startMoshSession writes the saved password when ssh prompts for one", async (t) => {

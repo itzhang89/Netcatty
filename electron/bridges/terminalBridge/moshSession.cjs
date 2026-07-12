@@ -444,9 +444,21 @@ function createMoshSessionApi(ctx) {
         }
     
         // Handshake failed before MOSH CONNECT — ssh exited without parse.
-        // The user has already seen the failure output (auth error, host
-        // key warning, etc). Just surface a session-exit with the code so
-        // the renderer can label the session "disconnected".
+        // Common on Windows when ConPTY mangled the magic line (#2025) or when
+        // mosh-server never started. Surface an explicit hint so the banner +
+        // "[mosh-server detached]" alone is not mistaken for a successful
+        // session that immediately closed (Netcatty #2121 residual connect).
+        const handshakeHint =
+          "\r\n[Mosh handshake failed: did not receive a valid MOSH CONNECT "
+          + "line from mosh-server. Confirm mosh-server is installed on the "
+          + "remote host, the SSH login succeeded, and UDP ports for mosh "
+          + "are reachable from this machine.]\r\n";
+        try {
+          bufferData(handshakeHint);
+          sessionLogStreamManager.appendData(sessionId, handshakeHint);
+        } catch {
+          // Best-effort diagnostics; still tear the session down below.
+        }
         flushPaced(() => {
           sessionLogStreamManager.stopStream(sessionId, logStreamToken);
           const contents = electronModule.webContents.fromId(session.webContentsId);
@@ -455,6 +467,7 @@ function createMoshSessionApi(ctx) {
             exitCode,
             signal,
             reason: "error",
+            error: "Mosh handshake failed: no MOSH CONNECT from mosh-server",
           });
           closeTerminalOutputSession?.(sessionId);
           sessions.delete(sessionId);
