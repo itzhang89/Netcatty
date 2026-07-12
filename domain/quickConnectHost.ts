@@ -2,16 +2,19 @@ import { sanitizeCredentialValue } from "./credentials";
 import type { Host, Identity, SSHKey } from "./models";
 import type { QuickConnectTarget } from "./quickConnect";
 
-export type QuickConnectProtocol = "ssh" | "mosh" | "telnet";
+export type QuickConnectProtocol = "ssh" | "mosh" | "et" | "telnet";
 export type QuickConnectAuthMethod = "password" | "key" | "certificate";
+
+export const getQuickConnectDefaultPort = (
+  protocol: QuickConnectProtocol,
+): number => protocol === "telnet" ? 23 : 22;
 
 export const isQuickConnectIdentityUsable = (
   identity: Identity | undefined,
   keys: SSHKey[],
   protocol: QuickConnectProtocol = "ssh",
 ): boolean => {
-  if (!identity?.username.trim()) return false;
-  if (protocol === "telnet" && identity.authMethod !== "password") return false;
+  if (!identity?.username.trim() || protocol === "telnet") return false;
   if (identity.authMethod === "password") {
     return Boolean(sanitizeCredentialValue(identity.password));
   }
@@ -29,6 +32,7 @@ type BuildQuickConnectHostInput = {
   password?: string;
   selectedKeyId?: string | null;
   selectedIdentityId?: string | null;
+  save?: boolean;
 };
 
 export const buildQuickConnectHost = ({
@@ -42,9 +46,10 @@ export const buildQuickConnectHost = ({
   password,
   selectedKeyId,
   selectedIdentityId,
+  save = false,
 }: BuildQuickConnectHostInput): Host => {
-  const usesIdentity = Boolean(selectedIdentityId);
   const isTelnet = protocol === "telnet";
+  const applicableIdentityId = isTelnet ? undefined : selectedIdentityId || undefined;
 
   return {
     id,
@@ -55,18 +60,20 @@ export const buildQuickConnectHost = ({
     group: "",
     tags: [],
     os: "linux",
-    protocol: protocol === "mosh" ? "ssh" : protocol,
+    protocol: protocol === "mosh" || protocol === "et" ? "ssh" : protocol,
     authMethod,
-    ...(usesIdentity ? { ephemeral: true } : {}),
-    ...(usesIdentity && !isTelnet ? { identityId: selectedIdentityId! } : {}),
-    ...(usesIdentity && isTelnet ? { telnetIdentityId: selectedIdentityId! } : {}),
-    ...(!usesIdentity && authMethod === "password" ? { password } : {}),
-    ...(!usesIdentity && authMethod !== "password" && selectedKeyId
-      ? { identityFileId: selectedKeyId }
-      : {}),
+    identityId: applicableIdentityId,
+    password: !applicableIdentityId && authMethod === "password" ? password : undefined,
+    identityFileId:
+      !applicableIdentityId && authMethod !== "password"
+        ? selectedKeyId || undefined
+        : undefined,
     moshEnabled: protocol === "mosh",
+    etEnabled: protocol === "et",
+    etPort: protocol === "et" ? 2022 : undefined,
     telnetEnabled: isTelnet,
     telnetPort: isTelnet ? port : undefined,
+    ephemeral: !save,
     createdAt,
   };
 };

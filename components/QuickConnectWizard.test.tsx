@@ -5,6 +5,25 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { I18nProvider } from "../application/i18n/I18nProvider";
 import QuickConnectWizard from "./QuickConnectWizard";
 
+test("QuickConnectWizard offers ET without obsolete Mosh path or log controls", () => {
+  const markup = renderToStaticMarkup(
+    <I18nProvider locale="en">
+      <QuickConnectWizard
+        open
+        target={{ hostname: "example.com" }}
+        keys={[]}
+        identities={[]}
+        onConnect={() => undefined}
+        onClose={() => undefined}
+      />
+    </I18nProvider>,
+  );
+
+  assert.match(markup, /Eternal Terminal/);
+  assert.doesNotMatch(markup, /mosh --server/);
+  assert.doesNotMatch(markup, /Show logs|Hide logs/);
+});
+
 test("quick connect shows saved identities as credential presets", () => {
   const markup = renderToStaticMarkup(
     <I18nProvider locale="en">

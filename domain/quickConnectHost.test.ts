@@ -6,11 +6,13 @@ import {
 } from "./quickConnectHost.ts";
 import { resolveHostAuth } from "./sshAuth.ts";
 
+const target = { hostname: "example.com" };
+
 test("quick connect keeps a selected credential preset as the host identity", () => {
   const host = buildQuickConnectHost({
     id: "quick-1",
     createdAt: 123,
-    target: { hostname: "192.0.2.10" },
+    target,
     protocol: "ssh",
     port: 22,
     username: "root",
@@ -61,28 +63,20 @@ test("quick connect only offers one-click connection for usable credential prese
   }, []), false);
 
   assert.equal(isQuickConnectIdentityUsable({
-    id: "telnet-key",
-    label: "Network key",
+    id: "telnet-password",
+    label: "Network password",
     username: "admin",
-    authMethod: "key",
-    keyId: "key-1",
+    authMethod: "password",
+    password: "secret",
     created: 3,
-  }, [{
-    id: "key-1",
-    label: "Key",
-    type: "ED25519",
-    privateKey: "private",
-    source: "imported",
-    category: "key",
-    created: 3,
-  }], "telnet"), false);
+  }, [], "telnet"), false);
 });
 
 test("quick connect preserves manually entered password authentication", () => {
   const host = buildQuickConnectHost({
     id: "quick-2",
     createdAt: 456,
-    target: { hostname: "example.test" },
+    target,
     protocol: "ssh",
     port: 2222,
     username: "operator",
@@ -94,5 +88,64 @@ test("quick connect preserves manually entered password authentication", () => {
   assert.equal(host.username, "operator");
   assert.equal(host.password, "manual-secret");
   assert.equal(host.port, 2222);
-  assert.equal(host.ephemeral, undefined);
+  assert.equal(host.ephemeral, true);
+});
+
+test("quick connect creates an ephemeral ET connection without saving credentials", () => {
+  const host = buildQuickConnectHost({
+    id: "quick-et",
+    createdAt: 1,
+    target,
+    protocol: "et",
+    port: 22,
+    username: "alice",
+    authMethod: "password",
+    password: "secret",
+  });
+
+  assert.equal(host.protocol, "ssh");
+  assert.equal(host.etEnabled, true);
+  assert.equal(host.etPort, 2022);
+  assert.equal(host.ephemeral, true);
+  assert.equal(host.password, "secret");
+});
+
+test("quick connect keeps Mosh on SSH bootstrap settings", () => {
+  const host = buildQuickConnectHost({
+    id: "quick-mosh",
+    createdAt: 1,
+    target,
+    protocol: "mosh",
+    port: 2202,
+    username: "root",
+    authMethod: "key",
+    selectedKeyId: "key-1",
+    save: true,
+  });
+
+  assert.equal(host.protocol, "ssh");
+  assert.equal(host.port, 2202);
+  assert.equal(host.moshEnabled, true);
+  assert.equal(host.identityFileId, "key-1");
+  assert.equal(host.ephemeral, false);
+});
+
+test("quick connect never applies an SSH identity to Telnet", () => {
+  const host = buildQuickConnectHost({
+    id: "quick-telnet",
+    createdAt: 1,
+    target,
+    protocol: "telnet",
+    port: 2323,
+    username: "telnet-user",
+    authMethod: "password",
+    password: "telnet-secret",
+    selectedIdentityId: "stale-ssh-identity",
+  });
+
+  assert.equal(host.identityId, undefined);
+  assert.equal(host.telnetIdentityId, undefined);
+  assert.equal(host.username, "telnet-user");
+  assert.equal(host.password, "telnet-secret");
+  assert.equal(host.telnetPort, 2323);
 });
