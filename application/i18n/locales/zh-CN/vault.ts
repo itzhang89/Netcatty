@@ -50,6 +50,17 @@ export const zhCNVaultMessages: Messages = {
   'quickConnect.knownHost.addAndContinue': '加入并继续',
   'quickConnect.addKey': '添加 key',
   'quickConnect.warning.unparsedOptions': '部分 SSH 参数已被忽略: {options}',
+  'quickConnect.identity.label': '凭据预设',
+  'quickConnect.identity.placeholder': '选择已保存的身份',
+  'quickConnect.identity.empty': '没有可用的身份',
+  'quickConnect.identity.hint': '选择身份后会自动带入用户名和认证信息。',
+  'quickConnect.identity.selectedHint': '将以 {username} 连接。',
+  'quickConnect.identity.method.password': '密码',
+  'quickConnect.identity.method.key': 'SSH 密钥',
+  'quickConnect.identity.method.certificate': '证书',
+  'quickConnect.identity.unavailable': '此身份在当前设备上缺少可用凭据。',
+  'quickConnect.identity.useCustom': '改用自定义凭据',
+  'quickConnect.identity.connect': '使用预设连接',
 
   // Protocol select dialog
   'protocolSelect.chooseProtocol': '选择协议',

@@ -515,6 +515,17 @@ export const ruVaultMessages: Messages = {
   'quickConnect.knownHost.addAndContinue': 'Добавить и продолжить',
   'quickConnect.addKey': 'Добавить ключ',
   'quickConnect.warning.unparsedOptions': 'Некоторые аргументы SSH были проигнорированы: {options}',
+  'quickConnect.identity.label': 'Набор учётных данных',
+  'quickConnect.identity.placeholder': 'Выберите сохранённый профиль',
+  'quickConnect.identity.empty': 'Сохранённые профили не найдены',
+  'quickConnect.identity.hint': 'Выберите профиль, чтобы автоматически подставить имя пользователя и способ входа.',
+  'quickConnect.identity.selectedHint': 'Готово к подключению как {username}.',
+  'quickConnect.identity.method.password': 'Пароль',
+  'quickConnect.identity.method.key': 'Ключ SSH',
+  'quickConnect.identity.method.certificate': 'Сертификат',
+  'quickConnect.identity.unavailable': 'Для этого профиля нет доступных учётных данных на устройстве.',
+  'quickConnect.identity.useCustom': 'Использовать другие данные',
+  'quickConnect.identity.connect': 'Подключиться с профилем',
 
   // Terminal
   'terminal.connectionErrorTitle': 'Ошибка подключения',

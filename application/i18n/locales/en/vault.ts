@@ -480,6 +480,17 @@ export const enVaultMessages: Messages = {
   'quickConnect.knownHost.addAndContinue': 'Add and continue',
   'quickConnect.addKey': 'Add key',
   'quickConnect.warning.unparsedOptions': 'Some SSH arguments were ignored: {options}',
+  'quickConnect.identity.label': 'Credential preset',
+  'quickConnect.identity.placeholder': 'Choose a saved identity',
+  'quickConnect.identity.empty': 'No saved identities found',
+  'quickConnect.identity.hint': 'Choose an identity to fill in its username and authentication automatically.',
+  'quickConnect.identity.selectedHint': 'Ready to connect as {username}.',
+  'quickConnect.identity.method.password': 'Password',
+  'quickConnect.identity.method.key': 'SSH key',
+  'quickConnect.identity.method.certificate': 'Certificate',
+  'quickConnect.identity.unavailable': 'This identity is missing usable credentials on this device.',
+  'quickConnect.identity.useCustom': 'Use custom credentials',
+  'quickConnect.identity.connect': 'Connect with preset',
 
   // Terminal
   'terminal.connectionErrorTitle': 'Connection Error',

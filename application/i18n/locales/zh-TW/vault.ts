@@ -50,6 +50,17 @@ export const zhTWVaultMessages: Messages = {
   'quickConnect.knownHost.addAndContinue': '加入並繼續',
   'quickConnect.addKey': '新增 key',
   'quickConnect.warning.unparsedOptions': '部分 SSH 引數已被忽略: {options}',
+  'quickConnect.identity.label': '憑據預設',
+  'quickConnect.identity.placeholder': '選擇已儲存的身分',
+  'quickConnect.identity.empty': '沒有可用的身分',
+  'quickConnect.identity.hint': '選擇身分後會自動帶入使用者名稱和驗證資訊。',
+  'quickConnect.identity.selectedHint': '將以 {username} 連線。',
+  'quickConnect.identity.method.password': '密碼',
+  'quickConnect.identity.method.key': 'SSH 金鑰',
+  'quickConnect.identity.method.certificate': '憑證',
+  'quickConnect.identity.unavailable': '此身分在目前裝置上缺少可用憑據。',
+  'quickConnect.identity.useCustom': '改用自訂憑據',
+  'quickConnect.identity.connect': '使用預設連線',
 
   // Protocol select dialog
   'protocolSelect.chooseProtocol': '選擇協定',
