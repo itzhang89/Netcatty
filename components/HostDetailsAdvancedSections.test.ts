@@ -14,6 +14,7 @@ test('advanced host settings expose per-host SSH connection timeouts', () => {
 });
 
 test('editing enabled SSH agent controls persists the enabled state', () => {
+  assert.match(source, /enabled=\{form\.useSshAgent === true\}/);
   assert.match(source, /useSshAgent: true,\s*identityAgent:/);
   assert.match(source, /useSshAgent: true,\s*identitiesOnly:/);
 });

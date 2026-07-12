@@ -166,7 +166,13 @@ main();
 
     function applyEtSshAgentEnvironment(env, options) {
       if (options?.useSshAgent === false) {
-        delete env.SSH_AUTH_SOCK;
+        if (options.agentForwarding) {
+          if (!env.SSH_AUTH_SOCK && process.env.SSH_AUTH_SOCK) {
+            env.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;
+          }
+        } else {
+          delete env.SSH_AUTH_SOCK;
+        }
         return env;
       }
       const socketPath = options?._resolvedSshAgentSocket
@@ -326,6 +332,7 @@ main();
 
       if (options.useSshAgent === false) {
         configLines.push("IdentityAgent none");
+        if (options.agentForwarding) configLines.push("ForwardAgent ${SSH_AUTH_SOCK}");
       } else if (options.useSshAgent && options._resolvedSshAgentSocket) {
         configLines.push(`IdentityAgent ${quoteRawSshConfigValue(options._resolvedSshAgentSocket)}`);
       }

@@ -183,6 +183,20 @@ test("Mosh explicitly disables native agent login after an opt-out", async () =>
 
   assert.deepEqual(auth.sshArgs, ["-o", "IdentityAgent=none"]);
   assert.equal(env.SSH_AUTH_SOCK, undefined);
+
+  const forwardingAuth = await api.buildMoshSshAuthArgs({
+    useSshAgent: false,
+    agentForwarding: true,
+  }, "session-forwarding");
+  const forwardingEnv = api.applyMoshSshAgentEnvironment(
+    { SSH_AUTH_SOCK: "/tmp/forwarded-agent.sock" },
+    { useSshAgent: false, agentForwarding: true },
+  );
+  assert.deepEqual(forwardingAuth.sshArgs, [
+    "-o", "IdentityAgent=none",
+    "-o", "ForwardAgent=${SSH_AUTH_SOCK}",
+  ]);
+  assert.equal(forwardingEnv.SSH_AUTH_SOCK, "/tmp/forwarded-agent.sock");
 });
 
 test("removed Mosh client detection APIs are not exposed to the renderer", () => {

@@ -242,10 +242,10 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
           <ToggleRow
             label={t("hostDetails.systemSshAgent")}
             hint={t("hostDetails.systemSshAgent.desc")}
-            enabled={form.useSshAgent !== false}
-            onToggle={() => update("useSshAgent", form.useSshAgent === false)}
+            enabled={form.useSshAgent === true}
+            onToggle={() => update("useSshAgent", form.useSshAgent !== true)}
           />
-          {form.useSshAgent !== false && (
+          {form.useSshAgent === true && (
             <>
               <HostDetailsSettingRow
                 label={t("hostDetails.systemSshAgent.socket")}
@@ -274,7 +274,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
               />
             </>
           )}
-          {form.useSshAgent !== false && sshAgentStatus && !sshAgentStatus.running && (
+          {form.useSshAgent === true && sshAgentStatus && !sshAgentStatus.running && (
             <div className="flex items-start gap-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/20">
               <AlertTriangle size={14} className="text-yellow-500 mt-0.5 flex-shrink-0" />
               <div className="space-y-1">

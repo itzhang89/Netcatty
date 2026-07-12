@@ -188,9 +188,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   } | null>(null);
 
   useEffect(() => {
-    if (form.agentForwarding || form.useSshAgent !== false) {
+    if (form.agentForwarding || form.useSshAgent === true) {
       checkSshAgent({
-        identityAgent: form.useSshAgent !== false ? form.identityAgent : undefined,
+        identityAgent: form.useSshAgent === true ? form.identityAgent : undefined,
         hostname: form.hostname,
         port: form.port,
         username: form.username,

@@ -136,6 +136,13 @@ test("resolveBridgeSshAgentAuth preserves an explicit agent opt-out", () => {
   );
 });
 
+test("resolveBridgeSshAgentAuth treats an unset agent toggle as disabled", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth(autofillBaseHost),
+    { useSshAgent: false },
+  );
+});
+
 test("hasBridgeSshCredentials accepts an agent-only host", () => {
   assert.equal(hasBridgeSshCredentials({ useSshAgent: true }), true);
   assert.equal(hasBridgeSshCredentials({}), false);
