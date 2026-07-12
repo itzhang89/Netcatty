@@ -131,7 +131,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                             <TextCursorInput size={12} />
                         </Button>
                     </TooltipTrigger>
-                    <TooltipContent>{t("terminal.toolbar.composeBar")}</TooltipContent>
+                    <TooltipContent side="bottom">{t("terminal.toolbar.composeBar")}</TooltipContent>
                 </Tooltip>
 
                 <Tooltip>
@@ -148,7 +148,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                             <Search size={12} />
                         </Button>
                     </TooltipTrigger>
-                    <TooltipContent>{t("terminal.toolbar.searchTerminal")}</TooltipContent>
+                    <TooltipContent side="bottom">{t("terminal.toolbar.searchTerminal")}</TooltipContent>
                 </Tooltip>
 
                 <Popover open={scriptsPopoverOpen} onOpenChange={setScriptsPopoverOpen}>
@@ -167,7 +167,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                                 </Button>
                             </PopoverTrigger>
                         </TooltipTrigger>
-                        <TooltipContent>{t("terminal.toolbar.scripts")}</TooltipContent>
+                        <TooltipContent side="bottom">{t("terminal.toolbar.scripts")}</TooltipContent>
                     </Tooltip>
                     <PopoverContent className="w-80 p-0 h-80 flex flex-col overflow-hidden" align="end">
                         <ScriptsSidePanel
@@ -209,7 +209,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                             <FolderInput size={12} />
                         </Button>
                     </TooltipTrigger>
-                    <TooltipContent>
+                    <TooltipContent side="bottom">
                         {status === 'connected' ? t("terminal.toolbar.openSftp") : t("terminal.toolbar.availableAfterConnect")}
                     </TooltipContent>
                 </Tooltip>
@@ -230,7 +230,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                                 <Upload size={12} />
                             </Button>
                         </TooltipTrigger>
-                        <TooltipContent>
+                        <TooltipContent side="bottom">
                             {status === 'connected' ? t("terminal.toolbar.sendYmodem") : t("terminal.toolbar.availableAfterConnect")}
                         </TooltipContent>
                     </Tooltip>
@@ -248,7 +248,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                                 <Download size={12} />
                             </Button>
                         </TooltipTrigger>
-                        <TooltipContent>
+                        <TooltipContent side="bottom">
                             {status === 'connected' ? t("terminal.toolbar.receiveYmodem") : t("terminal.toolbar.availableAfterConnect")}
                         </TooltipContent>
                     </Tooltip>
@@ -270,7 +270,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                         <TextCursorInput size={12} />
                     </Button>
                 </TooltipTrigger>
-                <TooltipContent>{t("terminal.toolbar.composeBar")}</TooltipContent>
+                <TooltipContent side="bottom">{t("terminal.toolbar.composeBar")}</TooltipContent>
             </Tooltip>
 
             <Tooltip>
@@ -288,7 +288,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                         <Search size={12} />
                     </Button>
                 </TooltipTrigger>
-                <TooltipContent>{t("terminal.toolbar.searchTerminal")}</TooltipContent>
+                <TooltipContent side="bottom">{t("terminal.toolbar.searchTerminal")}</TooltipContent>
             </Tooltip>
 
             {showLogButton && (
@@ -308,7 +308,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                             <FileText size={12} />
                         </Button>
                     </TooltipTrigger>
-                    <TooltipContent>
+                    <TooltipContent side="bottom">
                         {isSessionLogging ? t("terminal.toolbar.stopSessionLog") : t("terminal.toolbar.startSessionLog")}
                     </TooltipContent>
                 </Tooltip>
@@ -327,7 +327,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                         <Zap size={12} />
                     </Button>
                 </TooltipTrigger>
-                <TooltipContent>{t("terminal.toolbar.scripts")}</TooltipContent>
+                <TooltipContent side="bottom">{t("terminal.toolbar.scripts")}</TooltipContent>
             </Tooltip>
 
             {/* Overflow menu — keeps lower-frequency opener-style actions
@@ -355,7 +355,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                             </Button>
                         </PopoverTrigger>
                     </TooltipTrigger>
-                    <TooltipContent>{t("terminal.toolbar.more")}</TooltipContent>
+                    <TooltipContent side="bottom">{t("terminal.toolbar.more")}</TooltipContent>
                 </Tooltip>
                 <PopoverContent
                     className="w-48 p-1"
@@ -485,7 +485,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
                             <X size={11} />
                         </Button>
                     </TooltipTrigger>
-                    <TooltipContent>
+                    <TooltipContent side="bottom">
                         {closeRestoresTab
                             ? t("terminal.toolbar.detach")
                             : t("terminal.toolbar.closeSession")}

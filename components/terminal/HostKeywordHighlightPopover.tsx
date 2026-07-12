@@ -126,7 +126,10 @@ export const HostKeywordHighlightPopover: React.FC<HostKeywordHighlightPopoverPr
 
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen}>
-      <Tooltip>
+      {/* Force-close tooltip while the panel is open so the blue label does not
+          sit on top of the trigger/panel (especially in the compact top-right
+          cluster when the host info bar is hidden). */}
+      <Tooltip open={isOpen ? false : undefined}>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
             <Button
@@ -140,11 +143,16 @@ export const HostKeywordHighlightPopover: React.FC<HostKeywordHighlightPopoverPr
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>
-        <TooltipContent>{t('terminal.toolbar.hostHighlight.title')}</TooltipContent>
+        {/* Toolbar sits at the top of the terminal pane; open below the trigger
+            so the label is not clipped by the window/title edge (especially in
+            compact top-right action cluster when the host info bar is hidden). */}
+        <TooltipContent side="bottom" sideOffset={8} className="whitespace-nowrap max-w-none">
+          {t('terminal.toolbar.hostHighlight.title')}
+        </TooltipContent>
       </Tooltip>
-      <PopoverContent className="w-80 p-0" align="start" side="top">
-        <div className="px-3 py-2 border-b bg-muted/30 flex items-center justify-between">
-          <span className="text-xs font-semibold uppercase text-muted-foreground">
+      <PopoverContent className="w-80 p-0" align="end" side="bottom" sideOffset={8} collisionPadding={12}>
+        <div className="px-3 py-2 border-b bg-muted/30 flex items-center justify-between gap-2 min-w-0">
+          <span className="text-xs font-semibold uppercase text-muted-foreground truncate min-w-0">
             {t('terminal.toolbar.hostHighlight.title')}
           </span>
           <label className="flex items-center gap-2 cursor-pointer">
@@ -199,7 +207,9 @@ export const HostKeywordHighlightPopover: React.FC<HostKeywordHighlightPopoverPr
                         `}
                       />
                     </TooltipTrigger>
-                    <TooltipContent>{rule.enabled ? t('common.enabled') : t('common.disabled')}</TooltipContent>
+                    <TooltipContent side="bottom">
+                      {rule.enabled ? t('common.enabled') : t('common.disabled')}
+                    </TooltipContent>
                   </Tooltip>
                   <div className="flex-1 min-w-0">
                     <div 

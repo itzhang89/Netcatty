@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronsLeft, X as XIcon } from 'lucide-react';
 
 import { OSC7_SETUP_TARGETS } from './osc7Setup';
 import { TerminalServerStats } from './TerminalServerStats';
@@ -380,54 +381,9 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
           className="absolute left-0 right-0 top-0 z-20 pointer-events-none"
           onMouseDownCapture={handleTopOverlayMouseDownCapture}
         >
-          {!showHostInfoBar && !isSearchOpen && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  ref={compactActionsButtonRef}
-                  type="button"
-                  className="absolute right-1 top-1 h-6 w-6 rounded-md border pointer-events-auto opacity-70 hover:opacity-100 focus-visible:opacity-100"
-                  style={{
-                    backgroundColor: 'var(--terminal-ui-bg)',
-                    borderColor: 'var(--terminal-ui-border)',
-                    color: 'var(--terminal-ui-fg)',
-                  }}
-                  aria-label={t("terminal.toolbar.showActions")}
-                  aria-expanded={compactActionsOpen}
-                  aria-controls={`terminal-actions-${sessionId}`}
-                  onClick={() => setCompactActionsOpen((open) => !open)}
-                >
-                  <span
-                    aria-hidden="true"
-                    className="mx-auto block h-3 w-3"
-                    style={{
-                      backgroundImage: 'radial-gradient(circle, currentColor 1px, transparent 1px)',
-                      backgroundSize: '4px 4px',
-                    }}
-                  />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">{t("terminal.toolbar.showActions")}</TooltipContent>
-            </Tooltip>
-          )}
-          <div
-            id={`terminal-actions-${sessionId}`}
-            aria-hidden={!showHostInfoBar && !isSearchOpen && !compactActionsOpen ? true : undefined}
-            className={cn(
-              "terminal-topbar flex items-center gap-1 py-0.5 backdrop-blur-md min-w-0",
-              showHostInfoBar
-                ? "px-2 pointer-events-auto"
-                : "ml-auto w-fit rounded-bl-md px-1",
-              !showHostInfoBar && !isSearchOpen && [
-                "absolute right-8 top-0 -translate-y-1 pointer-events-none transition-[opacity,transform]",
-                compactActionsOpen
-                  ? "visible opacity-100 translate-y-0 pointer-events-auto"
-                  : "invisible opacity-0",
-              ],
-              !showHostInfoBar && isSearchOpen && "pointer-events-auto",
-            )}
-            data-host-info-visible={showHostInfoBar ? "true" : "false"}
-            style={{
+          {(() => {
+            const isCompactActionsMode = !showHostInfoBar && !isSearchOpen;
+            const toolbarSurfaceStyle = {
               backgroundColor: 'var(--terminal-ui-bg)',
               color: 'var(--terminal-ui-fg)',
               borderColor: 'var(--terminal-ui-border)',
@@ -436,180 +392,270 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
               ['--terminal-toolbar-btn' as never]: 'var(--terminal-ui-toolbar-btn)',
               ['--terminal-toolbar-btn-hover' as never]: 'var(--terminal-ui-toolbar-btn-hover)',
               ['--terminal-toolbar-btn-active' as never]: 'var(--terminal-ui-toolbar-btn-active)',
-            }}
-          >
-            <div
-              className={cn(
-                "flex items-center gap-1 text-[11px] font-semibold min-w-0 overflow-hidden shrink",
-                showHostInfoBar && "terminal-title-cluster",
-              )}
-            >
-              {!showHostInfoBar && inWorkspace && onDetachPointerDown && (
+            } as React.CSSProperties;
+
+            const terminalActionsBody = (
+              <>
                 <div
-                  aria-hidden="true"
-                  title={t("terminal.toolbar.dragPane")}
-                  className="h-5 w-3 rounded cursor-grab active:cursor-grabbing opacity-60 hover:opacity-100 flex-shrink-0"
-                  style={{
-                    backgroundImage: 'radial-gradient(circle, currentColor 1px, transparent 1px)',
-                    backgroundSize: '4px 4px',
-                  }}
-                  data-terminal-detach-drag-handle="true"
-                  onPointerDown={onDetachPointerDown}
-                />
-              )}
-              {showHostInfoBar && <div
-                className={cn(
-                  "flex items-center gap-1 min-w-0",
-                  inWorkspace && onDetachPointerDown && "cursor-grab active:cursor-grabbing",
-                )}
-                data-terminal-detach-drag-handle={inWorkspace && onDetachPointerDown ? "true" : undefined}
-                onPointerDown={onDetachPointerDown}
-              >
-                <span className="whitespace-nowrap truncate min-w-0 max-w-[18rem]" title={titleConnectionAddress || sessionDisplayName || host.label}>
-                  {titleConnectionAddress || sessionDisplayName || host.label}
-                </span>
-              </div>}
-              {host.protocol !== "local" && host.hostname && host.hostname !== "localhost" && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className="ml-0.5 p-0.5 rounded hover:bg-[color:var(--terminal-toolbar-btn-hover)] transition-colors opacity-60 hover:opacity-100 flex-shrink-0"
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={() => {
-                        void navigator.clipboard.writeText(host.hostname).then(() => {
-                          toast.success(t("terminal.statusbar.copyHostname.toast", { hostname: host.hostname }));
-                        }).catch(() => {
-                          toast.error(t("terminal.statusbar.copyHostname.error"));
-                        });
+                  className={cn(
+                    "flex items-center gap-1 text-[11px] font-semibold min-w-0 overflow-hidden shrink",
+                    showHostInfoBar && "terminal-title-cluster",
+                  )}
+                >
+                  {!showHostInfoBar && inWorkspace && onDetachPointerDown && (
+                    <div
+                      aria-hidden="true"
+                      title={t("terminal.toolbar.dragPane")}
+                      className="h-5 w-3 rounded cursor-grab active:cursor-grabbing opacity-60 hover:opacity-100 flex-shrink-0"
+                      style={{
+                        backgroundImage: 'radial-gradient(circle, currentColor 1px, transparent 1px)',
+                        backgroundSize: '4px 4px',
                       }}
-                      aria-label={t("terminal.statusbar.copyHostname.label")}
-                    >
-                      <Copy size={10} />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">{t("terminal.statusbar.copyHostname.tooltip", { hostname: host.hostname })}</TooltipContent>
-                </Tooltip>
-              )}
-              {shouldShowLineTimestampToolbarToggle(lineTimestampsAvailable, onUpdateHost) && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className={cn(
-                        "ml-0.5 p-0.5 rounded transition-colors flex-shrink-0",
-                        "hover:bg-[color:var(--terminal-toolbar-btn-hover)]",
-                        showLineTimestampGutter ? "opacity-100" : "opacity-60 hover:opacity-100",
-                      )}
-                      style={
-                        showLineTimestampGutter
-                          ? {
-                            backgroundColor: 'var(--terminal-toolbar-btn-active)',
-                            color: lineTimestampColor,
+                      data-terminal-detach-drag-handle="true"
+                      onPointerDown={onDetachPointerDown}
+                    />
+                  )}
+                  {showHostInfoBar && <div
+                    className={cn(
+                      "flex items-center gap-1 min-w-0",
+                      inWorkspace && onDetachPointerDown && "cursor-grab active:cursor-grabbing",
+                    )}
+                    data-terminal-detach-drag-handle={inWorkspace && onDetachPointerDown ? "true" : undefined}
+                    onPointerDown={onDetachPointerDown}
+                  >
+                    <span className="whitespace-nowrap truncate min-w-0 max-w-[18rem]" title={titleConnectionAddress || sessionDisplayName || host.label}>
+                      {titleConnectionAddress || sessionDisplayName || host.label}
+                    </span>
+                  </div>}
+                  {host.protocol !== "local" && host.hostname && host.hostname !== "localhost" && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="ml-0.5 p-0.5 rounded hover:bg-[color:var(--terminal-toolbar-btn-hover)] transition-colors opacity-60 hover:opacity-100 flex-shrink-0"
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onClick={() => {
+                            void navigator.clipboard.writeText(host.hostname).then(() => {
+                              toast.success(t("terminal.statusbar.copyHostname.toast", { hostname: host.hostname }));
+                            }).catch(() => {
+                              toast.error(t("terminal.statusbar.copyHostname.error"));
+                            });
+                          }}
+                          aria-label={t("terminal.statusbar.copyHostname.label")}
+                        >
+                          <Copy size={10} />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">{t("terminal.statusbar.copyHostname.tooltip", { hostname: host.hostname })}</TooltipContent>
+                    </Tooltip>
+                  )}
+                  {shouldShowLineTimestampToolbarToggle(lineTimestampsAvailable, onUpdateHost) && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className={cn(
+                            "ml-0.5 p-0.5 rounded transition-colors flex-shrink-0",
+                            "hover:bg-[color:var(--terminal-toolbar-btn-hover)]",
+                            showLineTimestampGutter ? "opacity-100" : "opacity-60 hover:opacity-100",
+                          )}
+                          style={
+                            showLineTimestampGutter
+                              ? {
+                                backgroundColor: 'var(--terminal-toolbar-btn-active)',
+                                color: lineTimestampColor,
+                              }
+                              : undefined
                           }
-                          : undefined
-                      }
-                      onClick={() => onUpdateHost(getLineTimestampToggleHostUpdate(host))}
-                      aria-label={lineTimestampToggleLabel}
-                      aria-pressed={showLineTimestampGutter}
-                    >
-                      <Clock3 size={10} />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">{lineTimestampToggleLabel}</TooltipContent>
-                </Tooltip>
-              )}
-              {isSystemSidebarEligible && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className="ml-0.5 p-0.5 rounded hover:bg-[color:var(--terminal-toolbar-btn-hover)] transition-colors opacity-60 hover:opacity-100 flex-shrink-0"
-                      onClick={onOpenSystem}
-                      aria-label={t("terminal.layer.system")}
-                    >
-                      <Activity size={10} />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">{t("terminal.layer.system")}</TooltipContent>
-                </Tooltip>
-              )}
-            </div>
-            {showHostInfoBar && !compactToolbar && (
-              <TerminalServerStats
-                sessionId={sessionId}
-                enabled={terminalSettings?.showServerStats ?? true}
-                refreshInterval={terminalSettings?.serverStatsRefreshInterval ?? 5}
-                isSupportedOs={isSupportedOs}
-                isConnected={status === 'connected'}
-                isVisible={isVisible}
-              />
-            )}
-            {showHostInfoBar && <div className="flex-1 min-w-0" />}
-            <div className="flex items-center gap-0.5 flex-shrink-0">
-              {inWorkspace && onToggleBroadcast && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="secondary"
-                      size="icon"
-                      className={cn(
-                        "h-6 w-6 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)]",
-                        "bg-transparent hover:bg-transparent",
-                        isBroadcastEnabled && "text-green-500",
-                      )}
-                      onClick={onToggleBroadcast}
-                      aria-label={
-                        isBroadcastEnabled
+                          onClick={() => onUpdateHost(getLineTimestampToggleHostUpdate(host))}
+                          aria-label={lineTimestampToggleLabel}
+                          aria-pressed={showLineTimestampGutter}
+                        >
+                          <Clock3 size={10} />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">{lineTimestampToggleLabel}</TooltipContent>
+                    </Tooltip>
+                  )}
+                  {isSystemSidebarEligible && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="ml-0.5 p-0.5 rounded hover:bg-[color:var(--terminal-toolbar-btn-hover)] transition-colors opacity-60 hover:opacity-100 flex-shrink-0"
+                          onClick={onOpenSystem}
+                          aria-label={t("terminal.layer.system")}
+                        >
+                          <Activity size={10} />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">{t("terminal.layer.system")}</TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
+                {showHostInfoBar && !compactToolbar && (
+                  <TerminalServerStats
+                    sessionId={sessionId}
+                    enabled={terminalSettings?.showServerStats ?? true}
+                    refreshInterval={terminalSettings?.serverStatsRefreshInterval ?? 5}
+                    isSupportedOs={isSupportedOs}
+                    isConnected={status === 'connected'}
+                    isVisible={isVisible}
+                  />
+                )}
+                {showHostInfoBar && <div className="flex-1 min-w-0" />}
+                <div className="flex items-center gap-0.5 flex-shrink-0">
+                  {inWorkspace && onToggleBroadcast && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="secondary"
+                          size="icon"
+                          className={cn(
+                            "h-6 w-6 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)]",
+                            "bg-transparent hover:bg-transparent",
+                            isBroadcastEnabled && "text-green-500",
+                          )}
+                          onClick={onToggleBroadcast}
+                          aria-label={
+                            isBroadcastEnabled
+                              ? t("terminal.toolbar.broadcastDisable")
+                              : t("terminal.toolbar.broadcastEnable")
+                          }
+                        >
+                          <Radio size={12} />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        {isBroadcastEnabled
                           ? t("terminal.toolbar.broadcastDisable")
-                          : t("terminal.toolbar.broadcastEnable")
-                      }
-                    >
-                      <Radio size={12} />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    {isBroadcastEnabled
-                      ? t("terminal.toolbar.broadcastDisable")
-                      : t("terminal.toolbar.broadcastEnable")}
-                  </TooltipContent>
-                </Tooltip>
-              )}
-              {inWorkspace && onDetach && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="secondary"
-                      size="icon"
-                      className="h-6 w-6 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-transparent hover:bg-transparent"
-                      onClick={onDetach}
-                      aria-label={t('terminal.toolbar.detach')}
-                    >
-                      <SquareArrowOutUpRight size={12} />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">{t('terminal.toolbar.detach')}</TooltipContent>
-                </Tooltip>
-              )}
-              {inWorkspace && !isFocusMode && onExpandToFocus && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="secondary"
-                      size="icon"
-                      className="h-6 w-6 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-transparent hover:bg-transparent"
-                      onClick={onExpandToFocus}
-                      aria-label={t("terminal.toolbar.focusMode")}
-                    >
-                      <Maximize2 size={12} />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">{t("terminal.toolbar.focusMode")}</TooltipContent>
-                </Tooltip>
-              )}
-              {renderControls({ showClose: inWorkspace })}
-            </div>
-          </div>
+                          : t("terminal.toolbar.broadcastEnable")}
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                  {inWorkspace && onDetach && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="secondary"
+                          size="icon"
+                          className="h-6 w-6 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-transparent hover:bg-transparent"
+                          onClick={onDetach}
+                          aria-label={t('terminal.toolbar.detach')}
+                        >
+                          <SquareArrowOutUpRight size={12} />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">{t('terminal.toolbar.detach')}</TooltipContent>
+                    </Tooltip>
+                  )}
+                  {inWorkspace && !isFocusMode && onExpandToFocus && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="secondary"
+                          size="icon"
+                          className="h-6 w-6 p-0 shadow-none border-none text-[color:var(--terminal-toolbar-fg)] bg-transparent hover:bg-transparent"
+                          onClick={onExpandToFocus}
+                          aria-label={t("terminal.toolbar.focusMode")}
+                        >
+                          <Maximize2 size={12} />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">{t("terminal.toolbar.focusMode")}</TooltipContent>
+                    </Tooltip>
+                  )}
+                  {renderControls({ showClose: inWorkspace })}
+                </div>
+              </>
+            );
+
+            if (isCompactActionsMode) {
+              // Speed-dial: circular toggle; full action strip springs out to the left.
+              // Do NOT use `.terminal-topbar` here — it sets container-type:inline-size,
+              // which size-contains the inline axis and collapses width to 0 when we
+              // animate max-width / rely on content sizing (buttons never appear).
+              // Shared h-7 keeps the toggle and the action pill the same height as the
+              // inner h-6 icon buttons + vertical padding.
+              // No box-shadow: the 0fr→1fr expand clip always slices shadows and
+              // looks worse than a clean border-only chrome.
+              const compactChromeClass =
+                "h-7 rounded-full border backdrop-blur-md";
+              return (
+                <div className="absolute right-1 top-1 z-30 flex flex-row-reverse items-center pointer-events-none">
+                  <Tooltip open={compactActionsOpen ? false : undefined}>
+                    <TooltipTrigger asChild>
+                      <button
+                        ref={compactActionsButtonRef}
+                        type="button"
+                        className={cn(
+                          "relative z-10 flex w-7 shrink-0 items-center justify-center pointer-events-auto",
+                          compactChromeClass,
+                          "opacity-80 hover:opacity-100 focus-visible:opacity-100",
+                          "transition-[transform,opacity] duration-200 ease-out",
+                          compactActionsOpen && "opacity-100",
+                        )}
+                        style={{
+                          backgroundColor: 'var(--terminal-ui-bg)',
+                          borderColor: 'var(--terminal-ui-border)',
+                          color: 'var(--terminal-ui-fg)',
+                        }}
+                        aria-label={t("terminal.toolbar.showActions")}
+                        aria-expanded={compactActionsOpen}
+                        aria-controls={`terminal-actions-${sessionId}`}
+                        onClick={() => setCompactActionsOpen((open) => !open)}
+                      >
+                        {/* Closed: chevrons point left (expand that way). Open: close. */}
+                        {compactActionsOpen
+                          ? <XIcon size={12} strokeWidth={2} aria-hidden="true" />
+                          : <ChevronsLeft size={13} strokeWidth={2} aria-hidden="true" />}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">{t("terminal.toolbar.showActions")}</TooltipContent>
+                  </Tooltip>
+                  <div
+                    className={cn(
+                      "grid min-w-0 transition-[grid-template-columns,opacity,margin] duration-200 ease-out",
+                      compactActionsOpen
+                        ? "mr-1.5 grid-cols-[1fr] opacity-100 pointer-events-auto"
+                        : "mr-0 grid-cols-[0fr] opacity-0 pointer-events-none",
+                    )}
+                  >
+                    <div className="min-w-0 overflow-hidden">
+                      <div
+                        id={`terminal-actions-${sessionId}`}
+                        aria-hidden={!compactActionsOpen ? true : undefined}
+                        className={cn(
+                          "flex w-max items-center gap-0.5 px-1.5",
+                          compactChromeClass,
+                        )}
+                        data-host-info-visible="false"
+                        style={toolbarSurfaceStyle}
+                      >
+                        {terminalActionsBody}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <div
+                id={`terminal-actions-${sessionId}`}
+                className={cn(
+                  "terminal-topbar flex items-center gap-1 py-0.5 backdrop-blur-md min-w-0",
+                  showHostInfoBar
+                    ? "px-2 pointer-events-auto"
+                    : "ml-auto w-fit rounded-bl-md px-1 pointer-events-auto",
+                )}
+                data-host-info-visible={showHostInfoBar ? "true" : "false"}
+                style={toolbarSurfaceStyle}
+              >
+                {terminalActionsBody}
+              </div>
+            );
+          })()}
           {isSearchOpen && (
             <div className="pointer-events-auto">
               <TerminalSearchBar
