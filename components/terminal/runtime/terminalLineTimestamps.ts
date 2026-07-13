@@ -13,6 +13,8 @@ export type TerminalLineTimestampSegmenter = {
 
 type TerminalLineTimestampSegmenterOptions = {
   now?: () => Date;
+  /** Optional label factory (used to intern same-second strings). */
+  formatLabel?: (date: Date) => string;
 };
 
 type TimestampMarker = {
@@ -25,14 +27,25 @@ type TimestampMarker = {
 type TimestampEntry = {
   marker: TimestampMarker;
   label: string;
-  disposeListener?: { dispose: () => void };
 };
 
 type TimestampStore = {
   segmenter: TerminalLineTimestampSegmenter;
+  /**
+   * Dense ring of live markers. Always records (even when the gutter is off)
+   * so expanding timestamps later still shows history — same product model as
+   * iTerm2, where per-line time lives in buffer metadata and display is a
+   * view toggle. Capacity is capped to scrollback so flood output cannot grow
+   * unboundedly.
+   */
   entries: TimestampEntry[];
   listeners: Set<() => void>;
   timestampOnlyPrefix: string;
+  /** Amortize prune cost across many registerMarker calls. */
+  recordsSincePrune: number;
+  /** Intern HH:MM:SS for the current wall-clock second. */
+  labelCacheKey: number | null;
+  labelCacheValue: string;
 };
 
 type XTermWithUnicodeService = XTerm & {
@@ -95,12 +108,36 @@ export type TerminalLineTimestampDiagnostics = {
 const stores = new WeakMap<XTerm, TimestampStore>();
 const MAX_SEGMENTED_TIMESTAMP_WRITES = 64;
 const BULK_TIMESTAMP_BATCH_MIN_BYTES = 4096;
+/** Match XTERM_UNLIMITED_SCROLLBACK_CAP — never keep more timestamps than useful history. */
+export const MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES = 50000;
+/** Compact disposed holes at least this often during flood writes. */
+const TIMESTAMP_PRUNE_EVERY_RECORDS = 256;
 
 const pad2 = (value: number): string => value.toString().padStart(2, "0");
 
 export const formatTerminalLineTimestamp = (date: Date): string => (
   `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`
 );
+
+/**
+ * Resolve how many line timestamps to retain for a terminal.
+ * Prefer the live scrollback option so a smaller history trims timestamps too.
+ */
+export const resolveTerminalLineTimestampCapacity = (
+  term: XTerm,
+  fallback = MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES,
+): number => {
+  const options = (term as XTerm & { options?: { scrollback?: number } }).options;
+  const scrollback = options?.scrollback;
+  const rows = Number.isFinite(term.rows) && term.rows > 0 ? term.rows : 24;
+  if (Number.isFinite(scrollback) && Number(scrollback) > 0) {
+    return Math.min(
+      MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES,
+      Math.floor(Number(scrollback)) + rows + 64,
+    );
+  }
+  return Math.min(MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES, fallback);
+};
 
 const isCsiFinalByte = (char: string): boolean => char >= "@" && char <= "~";
 const STRING_TERMINATOR = "\u009c";
@@ -270,6 +307,7 @@ export const createTerminalLineTimestampSegmenter = (
   options: TerminalLineTimestampSegmenterOptions = {},
 ): TerminalLineTimestampSegmenter => {
   const now = options.now ?? (() => new Date());
+  const formatLabel = options.formatLabel ?? formatTerminalLineTimestamp;
   let atLineStart = true;
   let currentLineStamped = false;
   let pendingEscapeSequence = "";
@@ -286,7 +324,7 @@ export const createTerminalLineTimestampSegmenter = (
     atLineStart = false;
     segments.push({
       kind: "timestamp",
-      label: formatTerminalLineTimestamp(now()),
+      label: formatLabel(now()),
     });
   };
 
@@ -375,6 +413,7 @@ export const createTerminalLineTimestampSegmenter = (
 };
 
 const notifyTimestampStore = (store: TimestampStore) => {
+  if (store.listeners.size === 0) return;
   for (const listener of store.listeners) {
     listener();
   }
@@ -383,29 +422,95 @@ const notifyTimestampStore = (store: TimestampStore) => {
 const getTimestampStore = (term: XTerm): TimestampStore => {
   let store = stores.get(term);
   if (!store) {
-    store = {
+    const created: TimestampStore = {
+      // Placeholder; replaced immediately with an interning segmenter below.
       segmenter: createTerminalLineTimestampSegmenter(),
       entries: [],
       listeners: new Set(),
       timestampOnlyPrefix: "",
+      recordsSincePrune: 0,
+      labelCacheKey: null,
+      labelCacheValue: "",
     };
-    stores.set(term, store);
+    created.segmenter = createTerminalLineTimestampSegmenter({
+      formatLabel: (date) => internTerminalLineTimestampLabel(created, date),
+    });
+    stores.set(term, created);
+    store = created;
   }
   return store;
 };
 
-const pruneDisposedEntries = (store: TimestampStore) => {
-  store.entries = store.entries.filter((entry) => !entry.marker.isDisposed);
+const internTerminalLineTimestampLabel = (
+  store: TimestampStore,
+  date: Date,
+): string => {
+  // Same wall-clock second → identical label; avoid allocating 50万× "12:34:56".
+  const key = Math.floor(date.getTime() / 1000);
+  if (store.labelCacheKey === key) {
+    return store.labelCacheValue;
+  }
+  const label = formatTerminalLineTimestamp(date);
+  store.labelCacheKey = key;
+  store.labelCacheValue = label;
+  return label;
+};
+
+/**
+ * Compact disposed markers and enforce a hard capacity in one linear pass.
+ * Avoids the previous O(n) filter on *every* individual marker dispose during
+ * scrollback trim (which turned seq 1 500000 into ~O(n²) main-thread work).
+ */
+const pruneDisposedEntries = (
+  store: TimestampStore,
+  capacity = MAX_TERMINAL_LINE_TIMESTAMP_ENTRIES,
+): void => {
+  const entries = store.entries;
+  let write = 0;
+  for (let read = 0; read < entries.length; read += 1) {
+    const entry = entries[read];
+    if (entry.marker.isDisposed) continue;
+    entries[write] = entry;
+    write += 1;
+  }
+  entries.length = write;
+
+  if (capacity > 0 && entries.length > capacity) {
+    const drop = entries.length - capacity;
+    for (let index = 0; index < drop; index += 1) {
+      entries[index].marker.dispose?.();
+    }
+    entries.splice(0, drop);
+  }
+  store.recordsSincePrune = 0;
+};
+
+const maybePruneTimestampEntries = (
+  term: XTerm,
+  store: TimestampStore,
+  force = false,
+): void => {
+  const capacity = resolveTerminalLineTimestampCapacity(term);
+  store.recordsSincePrune += 1;
+  if (
+    force
+    || store.recordsSincePrune >= TIMESTAMP_PRUNE_EVERY_RECORDS
+    || store.entries.length > capacity * 1.25
+  ) {
+    pruneDisposedEntries(store, capacity);
+  }
 };
 
 const resetTimestampStore = (store: TimestampStore) => {
   for (const entry of store.entries) {
-    entry.disposeListener?.dispose();
     entry.marker.dispose?.();
   }
   store.entries = [];
   store.segmenter.reset();
   store.timestampOnlyPrefix = "";
+  store.recordsSincePrune = 0;
+  store.labelCacheKey = null;
+  store.labelCacheValue = "";
   notifyTimestampStore(store);
 };
 
@@ -420,17 +525,26 @@ const recordTerminalLineTimestamp = (
   const marker = registerMarker?.call(term, cursorYOffset);
   if (!marker) return false;
 
-  const entry: TimestampEntry = { marker, label };
-  entry.disposeListener = marker.onDispose?.(() => {
-    store.entries = store.entries.filter((candidate) => candidate !== entry);
-    entry.disposeListener?.dispose();
-    notifyTimestampStore(store);
-  });
-  store.entries.push(entry);
+  // Intentionally no per-marker onDispose → filter(entries). xterm still
+  // marks isDisposed when scrollback trims; we compact lazily in bulk.
+  store.entries.push({ marker, label });
+  maybePruneTimestampEntries(term, store);
   if (notify) {
     notifyTimestampStore(store);
   }
   return true;
+};
+
+/** Test/diagnostics helper: live entry count after optional prune. */
+export const getTerminalLineTimestampEntryCount = (
+  term: XTerm,
+  options: { prune?: boolean } = {},
+): number => {
+  const store = getTimestampStore(term);
+  if (options.prune !== false) {
+    pruneDisposedEntries(store, resolveTerminalLineTimestampCapacity(term));
+  }
+  return store.entries.length;
 };
 
 const countLineFeeds = (data: string): number => {
@@ -689,6 +803,9 @@ const writeBatchedTimestampSegments = (
         timestamp.rowOffset - rowOffset,
       ) || timestampRecorded;
     }
+    // Compact once after bulk marker registration (scrollback may already have
+    // disposed older markers while this flood was writing).
+    maybePruneTimestampEntries(term, store, true);
     if (timestampRecorded) {
       notifyTimestampStore(store);
     }
@@ -788,7 +905,7 @@ export const getVisibleTerminalLineTimestampRows = (
     return [];
   }
   const store = getTimestampStore(term);
-  pruneDisposedEntries(store);
+  pruneDisposedEntries(store, resolveTerminalLineTimestampCapacity(term));
   return resolveTerminalTimestampGutterRows({
     viewportY: term.buffer.active.viewportY,
     rows: term.rows,

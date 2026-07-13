@@ -4,20 +4,30 @@ import assert from "node:assert/strict";
 import {
   createTerminalLineTimestampSegmenter,
   formatTerminalLineTimestamp,
+  getTerminalLineTimestampEntryCount,
   onTerminalLineTimestampsChange,
+  resolveTerminalLineTimestampCapacity,
   resolveTerminalTimestampGutterRows,
   type TerminalLineTimestampPerfStep,
   writeTerminalDataWithLineTimestamps,
 } from "./terminalLineTimestamps.ts";
 
-const createFakeTerm = (options: { cols?: number; wraparoundMode?: boolean } = {}) => {
+const createFakeTerm = (options: {
+  cols?: number;
+  wraparoundMode?: boolean;
+  scrollback?: number;
+  rows?: number;
+} = {}) => {
   const writes: string[] = [];
   const markerLines: number[] = [];
   const disposedMarkerLines: number[] = [];
+  const liveMarkers: Array<{ line: number; isDisposed: boolean; dispose: () => void }> = [];
   let cursorLine = 0;
   let cursorColumn = 0;
   const cols = options.cols ?? Number.POSITIVE_INFINITY;
   let wraparoundMode = options.wraparoundMode ?? true;
+  const scrollback = options.scrollback;
+  const rows = options.rows ?? 24;
   const isCombiningMark = (char: string): boolean => {
     const code = char.codePointAt(0);
     return code !== undefined && /\p{Mark}/u.test(String.fromCodePoint(code));
@@ -76,6 +86,17 @@ const createFakeTerm = (options: { cols?: number; wraparoundMode?: boolean } = {
       return cellWidth(String.fromCodePoint(codePoint));
     },
   };
+  const trimMarkersToScrollback = () => {
+    if (!Number.isFinite(scrollback) || scrollback === undefined || scrollback < 0) return;
+    // Approximate xterm: keep the newest (scrollback + rows) buffer lines.
+    const keepFromLine = Math.max(0, cursorLine - (scrollback + rows) + 1);
+    for (const marker of liveMarkers) {
+      if (!marker.isDisposed && marker.line < keepFromLine) {
+        marker.dispose();
+      }
+    }
+  };
+
   const term = {
     _core: {
       unicodeService,
@@ -84,10 +105,11 @@ const createFakeTerm = (options: { cols?: number; wraparoundMode?: boolean } = {
       active: { type: "normal", viewportY: 0 },
     },
     cols,
+    options: Number.isFinite(scrollback) ? { scrollback } : {},
     get modes() {
       return { wraparoundMode };
     },
-    rows: 24,
+    rows,
     write(data: string, callback?: () => void) {
       writes.push(data);
       for (let index = 0; index < data.length; index += 1) {
@@ -132,6 +154,7 @@ const createFakeTerm = (options: { cols?: number; wraparoundMode?: boolean } = {
             : cursorColumn + width;
         }
       }
+      trimMarkersToScrollback();
       callback?.();
     },
     registerMarker(offset: number) {
@@ -141,15 +164,17 @@ const createFakeTerm = (options: { cols?: number; wraparoundMode?: boolean } = {
         line,
         isDisposed: false,
         dispose() {
+          if (marker.isDisposed) return;
           marker.isDisposed = true;
           disposedMarkerLines.push(line);
         },
       };
+      liveMarkers.push(marker);
       return marker;
     },
   };
 
-  return { term, writes, markerLines, disposedMarkerLines };
+  return { term, writes, markerLines, disposedMarkerLines, liveMarkers };
 };
 
 test("segments terminal output into raw bytes plus timestamp markers", () => {
@@ -622,4 +647,75 @@ test("timestamps a prompt after split alternate-screen enter and leave in one ch
 
   assert.equal(writes.join(""), "\x1b[?1049hvim screen\x1b[?1049lprompt");
   assert.deepEqual(markerLines, [0]);
+});
+
+test("capacity follows terminal scrollback so flood output cannot retain unbounded markers", () => {
+  assert.equal(
+    resolveTerminalLineTimestampCapacity({
+      rows: 24,
+      options: { scrollback: 1000 },
+    } as never),
+    1000 + 24 + 64,
+  );
+  assert.equal(
+    resolveTerminalLineTimestampCapacity({
+      rows: 24,
+      options: { scrollback: 200000 },
+    } as never),
+    50000,
+  );
+});
+
+test("always records timestamps without a gutter listener so expanding later still has history", () => {
+  const { term, markerLines } = createFakeTerm();
+
+  // No onTerminalLineTimestampsChange subscription — gutter is hidden.
+  writeTerminalDataWithLineTimestamps(term as never, "a\r\nb\r\nc", () => {});
+
+  assert.deepEqual(markerLines, [0, 1, 2]);
+  assert.equal(getTerminalLineTimestampEntryCount(term as never), 3);
+
+  let notifications = 0;
+  const unsubscribe = onTerminalLineTimestampsChange(term as never, () => {
+    notifications += 1;
+  });
+  // Late subscriber must still see the already-recorded markers.
+  assert.equal(getTerminalLineTimestampEntryCount(term as never), 3);
+  writeTerminalDataWithLineTimestamps(term as never, "\r\nd", () => {});
+  unsubscribe();
+  assert.equal(notifications, 1);
+  assert.equal(getTerminalLineTimestampEntryCount(term as never), 4);
+});
+
+test("prunes disposed markers in bulk under scrollback pressure without retaining all flood lines", () => {
+  const scrollback = 200;
+  const rows = 24;
+  const { term } = createFakeTerm({ scrollback, rows });
+  const lineCount = 5000;
+  const lines = Array.from({ length: lineCount }, (_, index) => `line-${index}`).join("\r\n");
+
+  writeTerminalDataWithLineTimestamps(term as never, lines, () => {});
+
+  const live = getTerminalLineTimestampEntryCount(term as never);
+  const capacity = resolveTerminalLineTimestampCapacity(term as never);
+  assert.ok(live <= capacity, `expected <= ${capacity} live entries, got ${live}`);
+  // Must not retain near the full flood (old O(n) store grew with every line).
+  assert.ok(live < lineCount / 2, `expected aggressive prune, got ${live} of ${lineCount}`);
+});
+
+test("large multi-chunk flood stays within capacity across writes", () => {
+  const scrollback = 500;
+  const { term } = createFakeTerm({ scrollback, rows: 24 });
+
+  for (let chunk = 0; chunk < 40; chunk += 1) {
+    const lines = Array.from(
+      { length: 200 },
+      (_, index) => `c${chunk}-l${index}`,
+    ).join("\r\n");
+    writeTerminalDataWithLineTimestamps(term as never, `${lines}\r\n`, () => {});
+  }
+
+  const live = getTerminalLineTimestampEntryCount(term as never);
+  const capacity = resolveTerminalLineTimestampCapacity(term as never);
+  assert.ok(live <= capacity, `expected <= ${capacity} live entries, got ${live}`);
 });
