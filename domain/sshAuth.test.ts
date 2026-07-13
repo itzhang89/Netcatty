@@ -343,6 +343,31 @@ test("a migrated host keeps an inherited legacy group password password-only", (
   }).authMethod, "password");
 });
 
+test("migrated hosts keep inferred vault key and certificate authentication", () => {
+  const certificateKey = {
+    ...referenceKey,
+    id: "certificate-1",
+    certificate: "ssh-ed25519-cert-v01@openssh.com AAAA",
+    category: "certificate" as const,
+  };
+
+  for (const [key, expectedMethod] of [
+    [referenceKey, "key"],
+    [certificateKey, "certificate"],
+  ] as const) {
+    const host = sanitizeHost({
+      ...autofillBaseHost,
+      authMethod: undefined,
+      authPolicyVersion: undefined,
+      identityFileId: key.id,
+    });
+
+    assert.equal(host.authMethod, undefined);
+    assert.equal(host.authPolicyVersion, 1);
+    assert.equal(resolveHostAuth({ host, keys: [key] }).authMethod, expectedMethod);
+  }
+});
+
 test("resolveHostAuthMethodSelection gives legacy hosts a visible mode", () => {
   assert.equal(resolveHostAuthMethodSelection(autofillBaseHost), "auto");
   assert.equal(resolveHostAuthMethodSelection({ ...autofillBaseHost, password: "secret" }), "password");

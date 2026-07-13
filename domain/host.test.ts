@@ -201,6 +201,29 @@ test("sanitizeHost preserves a legacy whitespace-only password", () => {
   assert.equal(sanitized.authPolicyVersion, 1);
 });
 
+test("sanitizeHost preserves an inferred legacy saved password", () => {
+  const sanitized = sanitizeHost(makeHost({
+    password: "saved-secret",
+    authMethod: undefined,
+    authPolicyVersion: undefined,
+  }));
+
+  assert.equal(sanitized.authMethod, "password");
+  assert.equal(sanitized.authPolicyVersion, 1);
+});
+
+test("sanitizeHost preserves inferred legacy identity file paths", () => {
+  const sanitized = sanitizeHost(makeHost({
+    password: "fallback-secret",
+    authMethod: undefined,
+    authPolicyVersion: undefined,
+    identityFilePaths: ["~/.ssh/id_work"],
+  }));
+
+  assert.equal(sanitized.authMethod, "key");
+  assert.equal(sanitized.authPolicyVersion, 1);
+});
+
 test("sanitizeHost preserves automatic host icon color fields", () => {
   const sanitized = sanitizeHost(makeHost({
     iconMode: "auto",

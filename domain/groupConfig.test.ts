@@ -515,6 +515,17 @@ test("sanitizeGroupConfig does not replace a selected identity with password-onl
   assert.equal(after.authMethod, undefined);
 });
 
+test("sanitizeGroupConfig treats an empty inherited identity marker as cleared", () => {
+  const after = sanitizeGroupConfig({
+    path: "team/child",
+    identityId: "",
+    password: "child-secret",
+  });
+
+  assert.equal(after.identityId, "");
+  assert.equal(after.authMethod, "password");
+});
+
 test("applyGroupDefaults inherits skipEcdsaHostKey from the group when host has no value", () => {
   const result = applyGroupDefaults(host(), { skipEcdsaHostKey: true });
   assert.equal(result.skipEcdsaHostKey, true);

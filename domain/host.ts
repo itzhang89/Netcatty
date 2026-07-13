@@ -374,6 +374,15 @@ export const sanitizeHost = (host: Host, snippets: Snippet[] = []): Host => {
       || Boolean(migrated.identityFileId)
       || Boolean(migrated.identityFilePaths?.length)
     );
+  const inferredLegacyAuthMethod = migrated.authPolicyVersion !== 1
+    && migrated.authMethod === undefined
+    && migrated.useSshAgent !== true
+    ? migrated.identityFilePaths?.length
+      ? 'key'
+      : !migrated.identityFileId && migrated.password?.length
+        ? 'password'
+        : undefined
+    : undefined;
   const cleanNotes = host.notes?.trim() || undefined;
   const connectScriptIds = host.connectScriptIds ?? (
     snippets.length > 0
@@ -384,7 +393,9 @@ export const sanitizeHost = (host: Host, snippets: Snippet[] = []): Host => {
   );
   return {
     ...migrated,
-    authMethod: isLegacyPasswordDefault ? undefined : migrated.authMethod,
+    authMethod: isLegacyPasswordDefault
+      ? undefined
+      : migrated.authMethod ?? inferredLegacyAuthMethod,
     authPolicyVersion: 1,
     hostname: cleanHostname,
     distro: cleanDistro,

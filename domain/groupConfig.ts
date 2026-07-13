@@ -11,8 +11,8 @@ export function sanitizeGroupConfig(config: GroupConfig): GroupConfig {
   const migrated = migrateDeprecatedFontOverride(config);
   const hasLegacyPasswordOnlyCredentials = migrated.authMethod === undefined
     && Boolean(migrated.password?.length)
-    && migrated.identityId === undefined
-    && migrated.identityFileId === undefined
+    && !migrated.identityId
+    && !migrated.identityFileId
     && !migrated.identityFilePaths?.length;
 
   return hasLegacyPasswordOnlyCredentials

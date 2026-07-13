@@ -149,7 +149,7 @@ export const resolveHostAuth = (args: {
         ? "auto"
         : host.identityFilePaths?.length
           ? "key"
-          : host.authPolicyVersion === 1
+          : host.authPolicyVersion === 1 && !host.identityFileId
             ? "auto"
             : undefined
     )
