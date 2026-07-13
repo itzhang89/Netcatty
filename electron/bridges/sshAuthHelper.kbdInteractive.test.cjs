@@ -231,7 +231,9 @@ test("createKeyboardInteractiveHandler falls back to the modal on the retry afte
   assert.deepEqual(finishCalls, [{ first: ["wrong-password"] }]);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].channel, "netcatty:keyboard-interactive");
+  // Do not re-prefill the stale value, but still allow saving a corrected one.
   assert.equal(sent[0].payload.savedPassword, null);
+  assert.equal(sent[0].payload.allowSavePassword, true);
 
   drainPendingRequests(sent);
 });

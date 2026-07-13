@@ -1374,15 +1374,10 @@ function createKeyboardInteractiveHandler(options) {
       echo: p.echo,
     }));
 
-    // Never prefill / offer-to-save the host login password into a second-factor
-    // challenge. Passing null here is what keeps KeyboardInteractiveModal from
-    // re-submitting the wrong secret on Enter (#2150).
-    //
-    // Also treat autoFilledOnce as skip: servers can issue successive
-    // password-looking keyboard-interactive rounds inside one method without
-    // reporting partialSuccess between them (login password, then EDR). After
-    // the first auto-fill, later rounds must open empty — not pre-filled with
-    // the same login secret.
+    // Never prefill the host login password into a second-factor challenge or
+    // into a retry after a failed auto-fill. Passing null here is what keeps
+    // KeyboardInteractiveModal from re-submitting the wrong secret on Enter
+    // (#2150). autoFilledOnce blocks prefill only — not the save checkbox.
     const savedPasswordForModal = shouldPrefillSavedPassword(prompts, password, {
       skipAutoFill: skipAutoFill || autoFilledOnce,
       contextText,
@@ -1390,9 +1385,12 @@ function createKeyboardInteractiveHandler(options) {
       ? password
       : null;
     // Hide "Save password" only for true second-factor challenges:
-    //   - after partialSuccess / a prior auto-fill round, or
+    //   - after a first-factor partialSuccess, or
     //   - a *single* OTP / EDR secondary field (possibly with secondary wording
     //     only in name/instructions).
+    // Do NOT disable save after a failed auto-fill retry of the same first-
+    // factor Password: prompt — the user may have corrected a stale login
+    // password and should be able to persist it (Codex P2 on #2151).
     // Do NOT disable save just because a multi-prompt challenge also includes
     // an OTP field next to Password: (PAM/Duo first-login) — the modal only
     // ever saves the isAPasswordPrompt slot (Codex P3 on #2151).
@@ -1405,11 +1403,7 @@ function createKeyboardInteractiveHandler(options) {
       OTP_PROMPT_PATTERN.test(
         [contextText, singlePromptText].filter(Boolean).join("\n"),
       );
-    const allowSavePassword = !(
-      skipAutoFill ||
-      autoFilledOnce ||
-      singleSecondaryChallenge
-    );
+    const allowSavePassword = !(skipAutoFill || singleSecondaryChallenge);
 
     console.log(`${logPrefix} Showing modal for ${promptsData.length} prompts`);
     try { onPromptShown?.(); } catch (err) { console.warn(`${logPrefix} onPromptShown callback threw`, err); }
