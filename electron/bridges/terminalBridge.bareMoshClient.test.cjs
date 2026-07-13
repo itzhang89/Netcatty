@@ -237,6 +237,10 @@ test("Mosh automatic mode discovers custom local keys in preferred order", async
     "-i", path.join(sshDir, "id_ed25519"),
     "-i", path.join(sshDir, "id_work"),
   ]);
+  assert.deepEqual(auth.identityFilePaths, [
+    path.join(sshDir, "id_ed25519"),
+    path.join(sshDir, "id_work"),
+  ]);
 
   const agentFallback = await api.buildMoshSshAuthArgs({
     authMethod: "auto",
@@ -246,6 +250,10 @@ test("Mosh automatic mode discovers custom local keys in preferred order", async
   assert.deepEqual(agentFallback.sshArgs, [
     "-i", path.join(sshDir, "id_ed25519"),
     "-i", path.join(sshDir, "id_work"),
+  ]);
+  assert.deepEqual(agentFallback.identityFilePaths, [
+    path.join(sshDir, "id_ed25519"),
+    path.join(sshDir, "id_work"),
   ]);
 });
 

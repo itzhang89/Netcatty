@@ -494,6 +494,7 @@ test("startMoshSession stashes stats-companion auth after a successful handshake
       port: 2200,
       password: "secret",
       keyId: "key-1",
+      identityFilePaths: ["~/.ssh/id_work"],
       agentPublicKeys: ["ssh-ed25519 AAAASELECTED"],
       legacyAlgorithms: true,
       skipEcdsaHostKey: true,
@@ -516,6 +517,7 @@ test("startMoshSession stashes stats-companion auth after a successful handshake
   assert.equal(session.moshStatsAuth.port, 2200);
   assert.equal(session.moshStatsAuth.username, "alice");
   assert.equal(session.moshStatsAuth.password, "secret");
+  assert.deepEqual(session.moshStatsAuth.identityFilePaths, [path.join(os.homedir(), ".ssh", "id_work")]);
   assert.deepEqual(session.moshStatsAuth.agentPublicKeys, ["ssh-ed25519 AAAASELECTED"]);
   assert.equal(session.moshStatsAuth.legacyAlgorithms, true);
   assert.equal(session.moshStatsAuth.skipEcdsaHostKey, true);

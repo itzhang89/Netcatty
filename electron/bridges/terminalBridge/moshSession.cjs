@@ -226,6 +226,12 @@ function createMoshSessionApi(ctx) {
     async function buildMoshSshAuthArgs(options, sessionId) {
       const sshArgs = [];
       const tempFiles = [];
+      const resolvedIdentityFilePaths = [];
+      const rememberIdentityFilePath = (keyPath) => {
+        if (keyPath && !resolvedIdentityFilePaths.includes(keyPath)) {
+          resolvedIdentityFilePaths.push(keyPath);
+        }
+      };
     
       try {
         if (typeof options.privateKey === "string" && options.privateKey.trim().length > 0) {
@@ -257,6 +263,7 @@ function createMoshSessionApi(ctx) {
           for (const keyPath of options.identityFilePaths) {
             const normalized = normalizeMoshIdentityPath(keyPath);
             if (normalized) {
+              rememberIdentityFilePath(normalized);
               const selector = options.useSshAgent && !normalized.toLowerCase().endsWith(".pub")
                 ? `${normalized}.pub`
                 : normalized;
@@ -284,6 +291,7 @@ function createMoshSessionApi(ctx) {
             if (sshArgs[index] === "-i") selectedIdentities.add(sshArgs[index + 1]);
           }
           for (const keyPath of discoverMoshIdentityPaths()) {
+            rememberIdentityFilePath(keyPath);
             const selector = useAgentOnlySelectors ? `${keyPath}.pub` : keyPath;
             if (!selectedIdentities.has(selector)) {
               sshArgs.push("-i", selector);
@@ -321,7 +329,7 @@ function createMoshSessionApi(ctx) {
         throw err;
       }
     
-      return { sshArgs, tempFiles };
+      return { sshArgs, tempFiles, identityFilePaths: resolvedIdentityFilePaths };
     }
     
     /**
@@ -514,6 +522,7 @@ function createMoshSessionApi(ctx) {
               bareClient,
               optionsEnv,
               lang,
+              identityFilePaths: moshAuth.identityFilePaths,
               parsed: session.moshHandshakeResult,
               bufferData,
               flush,
@@ -577,7 +586,17 @@ function createMoshSessionApi(ctx) {
      * sentry whose writeToRemote closure captured the previous handle.
      */
     function swapToMoshClient(session, options, ctx) {
-      const { bareClient, optionsEnv, lang, parsed, bufferData, flush, flushPaced, sessionId } = ctx;
+      const {
+        bareClient,
+        optionsEnv,
+        lang,
+        identityFilePaths,
+        parsed,
+        bufferData,
+        flush,
+        flushPaced,
+        sessionId,
+      } = ctx;
     
       const { buildTerminalProcessEnv } = require("../httpNetworkProxyBridge.cjs");
       const env = moshHandshake.buildMoshClientEnv({
@@ -633,7 +652,7 @@ function createMoshSessionApi(ctx) {
         passphrase: options.passphrase,
         certificate: options.certificate,
         keyId: options.keyId,
-        identityFilePaths: options.identityFilePaths,
+        identityFilePaths: identityFilePaths || options.identityFilePaths,
         agentPublicKeys: options.agentPublicKeys,
         useSshAgent: options.useSshAgent,
         identityAgent: options.identityAgent,
