@@ -500,6 +500,32 @@ test("createOrderedStringAuthHandler sets hadPartialSuccess on partialSuccess", 
   assert.equal(authPhase.hadPartialSuccess, true);
 });
 
+test("createOrderedStringAuthHandler re-offers methods skipped as unavailable after partialSuccess (#2151 P2)", () => {
+  // Server first only advertises publickey. password sits in our order before
+  // publickey but is not advertised yet — it must NOT be permanently skipped.
+  // After publickey partialSuccess, the server asks for password and we offer it.
+  // (agent is also allowed when publickey is advertised, so it is tried first.)
+  const authPhase = { hadPartialSuccess: false };
+  const handler = createOrderedStringAuthHandler(
+    ["none", "agent", "password", "publickey", "keyboard-interactive"],
+    authPhase,
+  );
+
+  const offered = [];
+  handler(null, false, (method) => offered.push(method)); // none
+  handler(["publickey"], false, (method) => offered.push(method)); // agent
+  handler(["publickey"], false, (method) => offered.push(method)); // publickey (password still not advertised)
+  // publickey partially succeeds; server now wants password
+  handler(["password", "keyboard-interactive"], true, (method) => offered.push(method));
+
+  assert.deepEqual(offered, ["none", "agent", "publickey", "password"]);
+  assert.equal(authPhase.hadPartialSuccess, true);
+
+  // Continue to keyboard-interactive if password also only partial-succeeds
+  handler(["keyboard-interactive"], true, (method) => offered.push(method));
+  assert.deepEqual(offered, ["none", "agent", "publickey", "password", "keyboard-interactive"]);
+});
+
 test("buildAuthHandler simple password path tracks partialSuccess via function handler", () => {
   const auth = buildAuthHandler({
     password: "hunter2",

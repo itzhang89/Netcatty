@@ -1166,33 +1166,48 @@ const PASSWORD_PROMPT_PATTERN = /passw(or)?d|密\s*码|口\s*令/i;
  * `connectOpts.authHandler = ["none","password","keyboard-interactive"]`)
  * so callers can observe `partialSuccess` for multi-factor flows (#2150).
  *
- * Behavior mirrors ssh2's array handler: try methods in order, skip ones the
- * server is not currently advertising, continue after partial success.
+ * Behavior mirrors ssh2's array handler, with one important difference from a
+ * naive index cursor: methods that are merely *unavailable on this call*
+ * (not in `methodsLeft`) are NOT permanently consumed. That matters when a
+ * server first advertises only `publickey`, then after a partial-success key
+ * re-advertises `password` — advancing past password on the first pass would
+ * leave the connection unable to offer the second factor (Codex P2 on #2151).
  *
  * @param {string[]} order
  * @param {{ hadPartialSuccess: boolean }} authPhase - mutated on partialSuccess
  * @returns {(methodsLeft: string[]|null, partialSuccess: boolean, callback: Function) => void}
  */
 function createOrderedStringAuthHandler(order, authPhase) {
-  let index = 0;
+  // Methods we actually offered (server got a chance to accept/reject).
+  let attempted = new Set();
+  // Methods that contributed a successful factor; never retried.
+  const succeeded = new Set();
+  let lastOffered = null;
+
   return (methodsLeft, partialSuccess, callback) => {
-    if (partialSuccess && authPhase) {
-      authPhase.hadPartialSuccess = true;
+    if (partialSuccess) {
+      if (authPhase) authPhase.hadPartialSuccess = true;
+      if (lastOffered) succeeded.add(lastOffered);
+      // Drop rejected/skipped attempts so a method that was not advertised
+      // earlier can be offered now that the server is asking for it.
+      attempted = new Set(succeeded);
     }
 
     const available = Array.isArray(methodsLeft) && methodsLeft.length > 0
       ? methodsLeft
       : null;
 
-    while (index < order.length) {
-      const method = order[index++];
+    for (const method of order) {
+      if (attempted.has(method)) continue;
       if (available) {
         const allowed =
           available.includes(method) ||
           (method === "agent" && available.includes("publickey"));
-        // "none" is only meaningful on the initial probe (methodsLeft null).
+        // Not advertised right now — leave it eligible for a later phase.
         if (!allowed) continue;
       }
+      attempted.add(method);
+      lastOffered = method;
       return callback(method);
     }
     return callback(false);
