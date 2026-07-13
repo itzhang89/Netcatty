@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import type { SSHKey } from "../types.ts";
-import { HostDetailsConnectionSections } from "./HostDetailsConnectionSections.tsx";
+import type { Host, SSHKey } from "../types.ts";
+import {
+  applyEffectiveHostAuthMethodSelection,
+  HostDetailsConnectionSections,
+} from "./HostDetailsConnectionSections.tsx";
 import { TooltipProvider } from "./ui/tooltip.tsx";
 
 const longCredentialLabel =
@@ -128,6 +131,17 @@ test("host authentication choices show the inherited effective method", () => {
   });
 
   assert.match(markup, /<button[^>]*aria-pressed="true"[^>]*>hostDetails\.auth\.passwordOnly<\/button>/);
+});
+
+test("reselecting an inherited authentication method preserves group credentials", () => {
+  const host = {
+    id: "host-1",
+    label: "Host",
+    hostname: "example.com",
+    username: "root",
+  } as Host;
+
+  assert.equal(applyEffectiveHostAuthMethodSelection(host, "key", "key"), host);
 });
 
 test("an inherited deleted identity remains visible and clearable", () => {

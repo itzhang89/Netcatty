@@ -16,6 +16,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type HostDetailsConnectionSectionsProps = Record<string, any>;
 
+export const applyEffectiveHostAuthMethodSelection = (
+  host: Host,
+  authMethod: "auto" | "password" | "key" | "certificate",
+  effectiveAuthMethod: "auto" | "password" | "key" | "certificate",
+): Host => authMethod === effectiveAuthMethod
+  ? host
+  : applyHostAuthMethodSelection(host, authMethod);
+
 export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectionsProps> = ({
   t,
   form,
@@ -49,7 +57,11 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
   getDistroOptionLabel,
 }) => {
   const selectAuthMethod = (authMethod: "auto" | "password" | "key" | "certificate") => {
-    setForm((previous: Host) => applyHostAuthMethodSelection(previous, authMethod));
+    setForm((previous: Host) => applyEffectiveHostAuthMethodSelection(
+      previous,
+      authMethod,
+      effectiveAuthMethod,
+    ));
     if (authMethod === "auto" || authMethod === "password") {
       setPendingReferenceKeyPath(null);
       setSelectedCredentialType(null);
