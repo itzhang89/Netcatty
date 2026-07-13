@@ -190,6 +190,11 @@ test("joinSoftWrappedRows keeps sentence break after a URL", () => {
   );
 });
 
+test("joinSoftWrappedRows keeps hyphenated words intact", () => {
+  assert.equal(joinSoftWrappedRows("state-   ", "of-the-art"), "state-of-the-art");
+  assert.equal(joinSoftWrappedRows("--ver   ", "bose"), "--verbose");
+});
+
 test("preserves partial trailing spaces after wide characters using column ends", () => {
   // "中  X" with 中 width 2 → columns: [中][ ][ ][ ][X] roughly.
   // Select through the spaces after 中 but before X.

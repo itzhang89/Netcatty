@@ -264,11 +264,25 @@ function isStrongTokenContinuation(left: string, next: string): boolean {
     }
   }
 
-  // URL/path joiners (- _ :) — not "." (sentence end after URL).
+  // URL/path joiners (_ :) — not "." (sentence end after URL).
   if (
     looksLikeUrlOrPath(trailingToken) &&
     isAsciiWordChar(nextStart) &&
-    (leftEnd === "-" || leftEnd === "_" || leftEnd === ":")
+    (leftEnd === "_" || leftEnd === ":")
+  ) {
+    return true;
+  }
+
+  // Hyphenated words: "state-" + "of-the-art".
+  if (leftEnd === "-" && (isAsciiWordChar(nextStart) || nextStart === "-")) {
+    return true;
+  }
+
+  // CLI flags / options split mid-token: "--ver" + "bose".
+  if (
+    trailingToken.startsWith("-") &&
+    isAsciiWordChar(leftEnd) &&
+    isAsciiWordChar(nextStart)
   ) {
     return true;
   }
@@ -398,7 +412,24 @@ export function measureContentEnd(line: SelectionBufferLine): number {
 }
 
 function normalizeClipboardText(text: string): string {
-  return text.replace(ALL_NON_BREAKING_SPACE_REGEX, " ");
+  const normalized = text.replace(ALL_NON_BREAKING_SPACE_REGEX, " ");
+  // Match xterm selectionText: Windows uses CRLF between logical lines.
+  if (isWindowsPlatform() && normalized.includes("\n") && !normalized.includes("\r\n")) {
+    return normalized.replace(/\n/g, "\r\n");
+  }
+  return normalized;
+}
+
+function isWindowsPlatform(): boolean {
+  if (typeof navigator !== "undefined") {
+    const platform = navigator.platform || "";
+    const ua = navigator.userAgent || "";
+    if (/Win/i.test(platform) || /Windows/i.test(ua)) return true;
+  }
+  if (typeof process !== "undefined" && typeof process.platform === "string") {
+    return process.platform === "win32";
+  }
+  return false;
 }
 
 function normalizeSelectionRange(range: SelectionPosition): SelectionPosition {
