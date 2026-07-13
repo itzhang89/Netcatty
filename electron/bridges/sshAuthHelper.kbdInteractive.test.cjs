@@ -566,6 +566,27 @@ test("shouldPrefillSavedPassword is false after skipAutoFill and for secondary p
   );
 });
 
+test("shouldPrefillSavedPassword keeps multi-prompt Duo/two-factor password prefill (#2151 P3)", () => {
+  // Challenge name/instructions often say "Duo" / "two-factor" even when the
+  // form still includes a first-factor Password: slot next to an OTP field.
+  assert.equal(
+    shouldPrefillSavedPassword(
+      [passwordPrompt, verificationCodePrompt],
+      "hunter2",
+      { skipAutoFill: false, contextText: "Duo two-factor login" },
+    ),
+    true,
+  );
+  assert.equal(
+    shouldPrefillSavedPassword(
+      [passwordPrompt, verificationCodePrompt],
+      "hunter2",
+      { skipAutoFill: true, contextText: "Duo two-factor login" },
+    ),
+    false,
+  );
+});
+
 test("createKeyboardInteractiveHandler shows modal for Secondary Authentication Password banner (#2150)", () => {
   const { sender, sent } = createSender();
   const autoFillEvents = [];
@@ -649,8 +670,8 @@ test("createKeyboardInteractiveHandler allows save on multi-prompt Password + OT
   });
 
   handler(
-    "Authentication",
-    "",
+    "Duo two-factor login",
+    "Enter password and passcode",
     "",
     [passwordPrompt, verificationCodePrompt],
     () => {},
@@ -658,7 +679,7 @@ test("createKeyboardInteractiveHandler allows save on multi-prompt Password + OT
 
   assert.equal(sent.length, 1);
   assert.equal(sent[0].payload.allowSavePassword, true);
-  // Prefill still OK for the password slot in multi-prompt first-factor forms.
+  // Prefill still OK for the password slot even when name/instructions say Duo.
   assert.equal(sent[0].payload.savedPassword, "login-password");
 
   drainPendingRequests(sent);

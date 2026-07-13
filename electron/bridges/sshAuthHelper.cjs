@@ -1267,12 +1267,15 @@ function shouldPrefillSavedPassword(prompts, password, { skipAutoFill = false, c
   if (typeof password !== "string" || password.length === 0) return false;
   if (!Array.isArray(prompts) || prompts.length === 0) return false;
   // Single-prompt: only prefill classic first-factor password challenges.
+  // Secondary/OTP wording in name/instructions still blocks via contextText.
   if (prompts.length === 1) {
     return isAutoFillablePasswordChallenge(prompts, password, contextText);
   }
-  // Multi-prompt: let the modal fill the password slot(s); OTP slots stay empty.
-  // Still block when the overall challenge is clearly a second-factor banner.
-  if (OTP_PROMPT_PATTERN.test(String(contextText || ""))) return false;
+  // Multi-prompt (e.g. Password: + Verification code: / Duo): always prefill
+  // the password slot when we have a saved host password. Challenge names like
+  // "Duo two-factor" must NOT suppress prefill — skipAutoFill already covers
+  // true post-partialSuccess second-factor rounds (Codex P3 on #2151).
+  // The modal only writes into isAPasswordPrompt fields, not OTP slots.
   return true;
 }
 
