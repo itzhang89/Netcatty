@@ -138,6 +138,40 @@ test("prepareEtSshEnvironment automatic mode tries real local keys before a save
   assert.match(config, /PreferredAuthentications publickey,password,keyboard-interactive/);
 });
 
+test("prepareEtSshEnvironment automatic mode keeps interactive authentication without a saved password", (t) => {
+  const { api } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess-auto-interactive", {
+    hostname: "h",
+    username: "u",
+    authMethod: "auto",
+  });
+
+  const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
+  assert.match(config, /PreferredAuthentications publickey,password,keyboard-interactive/);
+});
+
+test("prepareEtSshEnvironment tolerates an unreadable local SSH directory", (t) => {
+  const unreadableFs = {
+    ...fs,
+    readdirSync(targetPath, options) {
+      if (String(targetPath).endsWith(`${path.sep}home${path.sep}.ssh`)) {
+        const error = new Error("permission denied");
+        error.code = "EACCES";
+        throw error;
+      }
+      return fs.readdirSync(targetPath, options);
+    },
+  };
+  const { api } = makeApi(t, { fs: unreadableFs });
+
+  assert.doesNotThrow(() => api.prepareEtSshEnvironment("sess-unreadable-ssh", {
+    hostname: "h",
+    username: "u",
+    authMethod: "password",
+    password: "saved-secret",
+  }));
+});
+
 test("prepareEtSshEnvironment askpass prefers the most specific matching password prompt", (t) => {
   const { api } = makeApi(t);
   const env = api.prepareEtSshEnvironment("sess1", {
@@ -437,6 +471,24 @@ test("prepareEtSshEnvironment applies automatic authentication to a jump host", 
   const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
   assert.match(config, /Host jump\.example[\s\S]*IdentityFile "/);
   assert.ok(config.includes(defaultKeyPath));
+  assert.match(config, /Host jump\.example[\s\S]*PreferredAuthentications publickey,password,keyboard-interactive/);
+});
+
+test("prepareEtSshEnvironment keeps interactive authentication for an automatic jump host", (t) => {
+  const { api } = makeApi(t);
+  const env = api.prepareEtSshEnvironment("sess-auto-interactive-jump", {
+    hostname: "target.example",
+    username: "alice",
+    authMethod: "password",
+    password: "target-secret",
+    jumpHosts: [{
+      hostname: "jump.example",
+      username: "ops",
+      authMethod: "auto",
+    }],
+  });
+
+  const config = fs.readFileSync(path.join(env.env.HOME, ".ssh", "config"), "utf8");
   assert.match(config, /Host jump\.example[\s\S]*PreferredAuthentications publickey,password,keyboard-interactive/);
 });
 

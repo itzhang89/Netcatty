@@ -243,6 +243,24 @@ test("startMoshSession password-only mode disables public-key authentication", a
   assert.ok(h.spawns[0].args.includes("PreferredAuthentications=password,keyboard-interactive"));
 });
 
+test("startMoshSession key mode never probes unrelated default identities", async (t) => {
+  const h = makeHarness(t);
+  await h.bridge.startMoshSession(
+    h.event,
+    {
+      ...h.options,
+      authMethod: "key",
+      password: "fallback-secret",
+      useSshAgent: false,
+    },
+    { moshClientLookup: h.lookupOpts },
+  );
+
+  assert.ok(h.spawns[0].args.includes("IdentityFile=none"));
+  assert.ok(h.spawns[0].args.includes("IdentitiesOnly=yes"));
+  assert.equal(h.spawns[0].args.includes("PubkeyAuthentication=no"), false);
+});
+
 test("startMoshSession writes the saved password when ConPTY appends cursor controls to the prompt", async (t) => {
   const h = makeHarness(t);
   await h.bridge.startMoshSession(

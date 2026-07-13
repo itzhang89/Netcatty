@@ -263,6 +263,14 @@ function createMoshSessionApi(ctx) {
           }
         }
 
+        const hasSelectedIdentity = sshArgs.some((arg) => arg === "-i");
+        if (
+          (options.authMethod === "key" || options.authMethod === "certificate")
+          && !hasSelectedIdentity
+        ) {
+          sshArgs.push("-o", "IdentityFile=none", "-o", "IdentitiesOnly=yes");
+        }
+
         if (options.useSshAgent === false) {
           sshArgs.push("-o", "IdentityAgent=none");
           if (options.agentForwarding) {

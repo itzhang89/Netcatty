@@ -311,10 +311,16 @@ main();
       // mismatch detection instead of trusting it again on every ET session.
       const realSshDir = path.join(os.homedir(), ".ssh");
       fs.mkdirSync(realSshDir, { recursive: true });
-      const defaultIdentityPaths = fs.readdirSync(realSshDir, { withFileTypes: true })
-        .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && /^id_[\w-]+$/.test(entry.name))
-        .map((entry) => path.join(realSshDir, entry.name))
-        .sort();
+      let defaultIdentityPaths = [];
+      try {
+        defaultIdentityPaths = fs.readdirSync(realSshDir, { withFileTypes: true })
+          .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && /^id_[\w-]+$/.test(entry.name))
+          .map((entry) => path.join(realSshDir, entry.name))
+          .sort();
+      } catch {
+        // Local key discovery is optional. Password-only and interactive ET
+        // sessions must still work when ~/.ssh cannot be read.
+      }
       const knownHostsPath = path.join(realSshDir, "known_hosts");
       sshOptions.push(`UserKnownHostsFile=${normalizeSshConfigPath(knownHostsPath)}`);
 
@@ -420,11 +426,7 @@ main();
       // the config file — ET on Windows passes --ssh-option values through cmd.exe
       // which treats commas as argument delimiters.
       if (options.authMethod === "auto") {
-        if (hasPassword) {
-          configLines.push("PreferredAuthentications publickey,password,keyboard-interactive");
-        } else {
-          sshOptions.push("PreferredAuthentications=publickey");
-        }
+        configLines.push("PreferredAuthentications publickey,password,keyboard-interactive");
       } else if (options.authMethod === "password") {
         sshOptions.push("PubkeyAuthentication=no");
         configLines.push("PreferredAuthentications password,keyboard-interactive");
@@ -534,9 +536,7 @@ main();
           for (const keyPath of defaultIdentityPaths) {
             jumpConfigLines.push(`  IdentityFile ${quoteSshConfigValue(keyPath)}`);
           }
-          jumpConfigLines.push(jump.password
-            ? "  PreferredAuthentications publickey,password,keyboard-interactive"
-            : "  PreferredAuthentications publickey");
+          jumpConfigLines.push("  PreferredAuthentications publickey,password,keyboard-interactive");
         } else if (jump.authMethod === "password") {
           jumpConfigLines.push("  PubkeyAuthentication no");
           jumpConfigLines.push("  PreferredAuthentications password,keyboard-interactive");

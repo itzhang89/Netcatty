@@ -316,6 +316,8 @@ test("applyHostAuthMethodSelection clears incompatible per-host credentials", ()
     identityId: "",
     identityFileId: undefined,
     identityFilePaths: undefined,
+    identityAgent: undefined,
+    identitiesOnly: undefined,
     useSshAgent: undefined,
   });
   assert.deepEqual(applyHostAuthMethodSelection(keyedHost, "key"), {
@@ -499,13 +501,41 @@ test("switching to automatic keeps visible custom agent settings active", () => 
   } as Host, "auto");
 
   assert.equal(selected.useSshAgent, true);
+  assert.equal(selected.identitiesOnly, undefined);
   assert.deepEqual(resolveBridgeSshAgentAuth(selected, undefined, "auto"), {
     useSshAgent: true,
     identityAgent: "/tmp/custom-agent.sock",
-    identitiesOnly: true,
+    identitiesOnly: undefined,
     addKeysToAgent: undefined,
     useKeychain: undefined,
   });
+});
+
+test("switching to automatic clears stale strict agent settings", () => {
+  const selected = applyHostAuthMethodSelection({
+    ...autofillBaseHost,
+    authMethod: "key",
+    identityFileId: referenceKey.id,
+    useSshAgent: true,
+    identityAgent: "none",
+    identitiesOnly: true,
+  } as Host, "auto");
+
+  assert.equal(selected.useSshAgent, undefined);
+  assert.equal(selected.identityAgent, undefined);
+  assert.equal(selected.identitiesOnly, undefined);
+});
+
+test("an explicit automatic host remains automatic when its group supplies a key", () => {
+  const effective = applyGroupDefaults({
+    ...autofillBaseHost,
+    authMethod: "auto",
+  }, {
+    authMethod: "key",
+    identityFileId: referenceKey.id,
+  });
+
+  assert.equal(resolveHostAuth({ host: effective, keys: [referenceKey] }).authMethod, "auto");
 });
 
 const autofillBaseHost = {

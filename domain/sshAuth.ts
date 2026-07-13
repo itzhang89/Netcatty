@@ -1,6 +1,7 @@
 import type { GroupConfig, Host, HostAuthMethod, Identity, SSHKey } from "./models";
 import { sanitizeCredentialValue } from "./credentials";
 import { applyGroupDefaults } from "./groupConfig";
+import { isSshAgentNoneValue } from "./sshAgentSettings";
 
 type HostAuthOverride = {
   authMethod?: HostAuthMethod;
@@ -38,9 +39,17 @@ export const applyHostAuthMethodSelection = <T extends Host>(
   authMethod: HostAuthMethod,
 ): T => {
   const previousMethod = resolveHostAuthMethodSelection(host);
+  const isAutomatic = authMethod === "auto";
   const clearSelectedKey = authMethod === "auto"
     || authMethod === "password"
     || previousMethod !== authMethod;
+
+  const automaticIdentityAgent = isAutomatic && isSshAgentNoneValue(host.identityAgent)
+    ? undefined
+    : host.identityAgent;
+  const hasAutomaticAgentSettings = Boolean(
+    automaticIdentityAgent || host.addKeysToAgent || host.useKeychain !== undefined,
+  );
 
   return {
     ...host,
@@ -49,10 +58,11 @@ export const applyHostAuthMethodSelection = <T extends Host>(
     ...(clearSelectedKey
       ? { identityFileId: undefined, identityFilePaths: undefined }
       : {}),
-    useSshAgent: authMethod === "auto"
-      ? (host.identityAgent || host.identitiesOnly !== undefined || host.addKeysToAgent || host.useKeychain !== undefined
-        ? true
-        : undefined)
+    ...(isAutomatic
+      ? { identityAgent: automaticIdentityAgent, identitiesOnly: undefined }
+      : {}),
+    useSshAgent: isAutomatic
+      ? (hasAutomaticAgentSettings ? true : undefined)
       : authMethod === "key" && previousMethod === "key"
         ? host.useSshAgent
         : false,
@@ -67,6 +77,7 @@ const inferAuthMethod = (opts: {
   key?: SSHKey;
 }): HostAuthMethod => {
   if (opts.explicit) return opts.explicit;
+  if (opts.hostAuthMethod === "auto") return "auto";
   if (opts.keyId) {
     if (opts.hostAuthMethod === "key" || opts.hostAuthMethod === "certificate") {
       return opts.hostAuthMethod;
