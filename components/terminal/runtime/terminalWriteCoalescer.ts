@@ -14,6 +14,36 @@ import {
   type WriteCoalescer,
 } from "./writeCoalescer.ts";
 
+/**
+ * Detect CSI private-mode sequences that enter the alternate screen buffer
+ * (DECSET 47 / 1047 / 1049). Used to schedule rAF before xterm has switched
+ * `buffer.active.type`, so the first TUI repaint chunks still coalesce per frame.
+ */
+const looksLikeEnteringAlternateScreen = (data: string): boolean => {
+  if (!data.includes("\x1b[")) return false;
+  // ESC [ ? <params> h  — only SET (h), not RESET (l)
+  const pattern = /\x1b\[\?([0-9;]*)h/g;
+  for (
+    let match = pattern.exec(data);
+    match !== null;
+    match = pattern.exec(data)
+  ) {
+    const params = match[1]!.split(";").filter(Boolean);
+    if (params.some((param) => param === "47" || param === "1047" || param === "1049")) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const isTerminalAlternateScreenActive = (term: XTerm): boolean => {
+  try {
+    return (term.buffer?.active as { type?: string } | undefined)?.type === "alternate";
+  } catch {
+    return false;
+  }
+};
+
 type CoalescerByteCapResolver = () => number;
 type CoalescerFlushGate = () => boolean;
 export type CoalescedTerminalWriteOptions = {
@@ -245,16 +275,16 @@ export const enqueueCoalescedTerminalWrite = (
       getMaxPendingBytes: () => resolveCoalescerByteCap(term),
       shouldFlushScheduledFrame: () => terminalWriteCoalescerFlushGates.get(term)?.() ?? true,
       // Tabby streams normal-screen output without waiting for vsync. Keep rAF
-      // only for alternate-screen TUIs so multi-chunk repaints stay atomic.
+      // for alternate-screen TUIs (including the enter-alt burst before xterm
+      // has switched buffer.active.type) so multi-chunk repaints stay atomic.
       // When rAF is unavailable (Node unit tests), prefer the "raf" mode so the
       // coalescer falls back to an immediate flush (legacy test contract).
-      resolveScheduleMode: (): WriteCoalesceScheduleMode => {
-        try {
-          if ((term.buffer?.active as { type?: string } | undefined)?.type === "alternate") {
-            return "raf";
-          }
-        } catch {
-          // Test doubles may omit buffer.
+      resolveScheduleMode: ({ nextChunk }): WriteCoalesceScheduleMode => {
+        if (
+          isTerminalAlternateScreenActive(term)
+          || looksLikeEnteringAlternateScreen(nextChunk)
+        ) {
+          return "raf";
         }
         const canUseMicrotask = typeof queueMicrotask === "function"
           && typeof globalThis.requestAnimationFrame === "function";

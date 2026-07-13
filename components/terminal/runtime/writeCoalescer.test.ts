@@ -69,6 +69,66 @@ test("microtask schedule mode flushes after the current turn without rAF", async
   coalescer.dispose();
 });
 
+test("upgrades a pending microtask schedule to rAF when a later chunk requests it", () => {
+  const writes: string[] = [];
+  const microtasks: Array<() => void> = [];
+  const frames: Array<() => void> = [];
+  let modeForChunk = "microtask" as "microtask" | "raf";
+
+  const originalMicrotask = globalThis.queueMicrotask;
+  const originalRaf = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
+  const originalCancel = Object.getOwnPropertyDescriptor(globalThis, "cancelAnimationFrame");
+  globalThis.queueMicrotask = (callback: () => void) => {
+    microtasks.push(callback);
+  };
+  Object.defineProperty(globalThis, "requestAnimationFrame", {
+    configurable: true,
+    value: (callback: FrameRequestCallback) => {
+      frames.push(() => callback(0));
+      return frames.length;
+    },
+  });
+  Object.defineProperty(globalThis, "cancelAnimationFrame", {
+    configurable: true,
+    value: () => {},
+  });
+
+  try {
+    const coalescer = createWriteCoalescer((data) => writes.push(data), {
+      resolveScheduleMode: () => modeForChunk,
+    });
+    coalescer.push("shell");
+    assert.equal(microtasks.length, 1);
+    assert.equal(frames.length, 0);
+
+    modeForChunk = "raf";
+    coalescer.push("\x1b[?1049hTUI");
+    // Microtask cancelled; rAF armed for the combined batch.
+    assert.equal(frames.length, 1);
+    assert.deepEqual(writes, []);
+
+    // Cancelled microtask must not flush.
+    for (const task of microtasks.splice(0)) task();
+    assert.deepEqual(writes, []);
+
+    frames[0]!();
+    assert.deepEqual(writes, ["shell\x1b[?1049hTUI"]);
+    coalescer.dispose();
+  } finally {
+    globalThis.queueMicrotask = originalMicrotask;
+    if (originalRaf) {
+      Object.defineProperty(globalThis, "requestAnimationFrame", originalRaf);
+    } else {
+      Reflect.deleteProperty(globalThis, "requestAnimationFrame");
+    }
+    if (originalCancel) {
+      Object.defineProperty(globalThis, "cancelAnimationFrame", originalCancel);
+    } else {
+      Reflect.deleteProperty(globalThis, "cancelAnimationFrame");
+    }
+  }
+});
+
 test("coalesces a large TUI repaint until the scheduled frame", () => {
   const writes: string[] = [];
   const coalescer = createTestCoalescer((data) => writes.push(data));

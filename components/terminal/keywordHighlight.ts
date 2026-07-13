@@ -139,9 +139,13 @@ export class KeywordHighlighter implements IDisposable {
       this.term.onWriteParsed(() => {
         const pressure = getTerminalOutputPressure(this.term);
         if (pressure.background) {
-          // Hidden panes: do not schedule highlight work until visible again.
+          // Hidden panes: avoid immediate scans that fight xterm, but still arm a
+          // debounced refresh. Reveal only flushes writes/repaints — without a
+          // scheduled tick, decorations for hidden-pane output never apply if no
+          // further write/scroll/resize happens after show (Codex PR review).
           this.updateWriteBurst();
           this.markVisibleRangeDirty();
+          this.triggerRefresh("debounced", "write");
           return;
         }
         if (

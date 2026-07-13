@@ -37,6 +37,13 @@ export type WriteCoalescer = {
 
 export type WriteCoalesceScheduleMode = "raf" | "microtask";
 
+export type WriteCoalesceScheduleContext = {
+  /** Chunk about to be (or just) enqueued. */
+  nextChunk: string;
+  /** Bytes already pending before this chunk was appended. */
+  pendingBytesBefore: number;
+};
+
 type ScheduleWriteFrame = (callback: () => void) => (() => void) | null;
 
 export type WriteCoalescerOptions = {
@@ -44,8 +51,10 @@ export type WriteCoalescerOptions = {
   /**
    * Choose scheduling per push. Alternate-screen TUIs should return `raf`;
    * normal-screen / bulk output should return `microtask` for lower latency.
+   * Called with the incoming chunk so callers can detect TUI enter sequences
+   * before xterm has switched buffers.
    */
-  resolveScheduleMode?: () => WriteCoalesceScheduleMode;
+  resolveScheduleMode?: (ctx: WriteCoalesceScheduleContext) => WriteCoalesceScheduleMode;
   getMaxPendingBytes?: () => number;
   shouldFlushScheduledFrame?: () => boolean;
 };
@@ -108,6 +117,7 @@ export const createWriteCoalescer = (
   let pending: string[] = [];
   let pendingBytes = 0;
   let cancelPendingFrame: (() => void) | null = null;
+  let scheduledMode: WriteCoalesceScheduleMode | null = null;
   let disposed = false;
   const customScheduleFrame = options.scheduleFrame;
   const resolveScheduleMode = options.resolveScheduleMode ?? (() => "raf" as const);
@@ -120,6 +130,27 @@ export const createWriteCoalescer = (
       cancelPendingFrame();
       cancelPendingFrame = null;
     }
+    scheduledMode = null;
+  };
+
+  const armSchedule = (mode: WriteCoalesceScheduleMode): void => {
+    const cancelFrame = scheduleByMode(mode, () => {
+      cancelPendingFrame = null;
+      scheduledMode = null;
+      if (!shouldFlushScheduledFrame()) {
+        return;
+      }
+      flushSync();
+    }, customScheduleFrame);
+    if (cancelFrame === null) {
+      if (!shouldFlushScheduledFrame()) {
+        return;
+      }
+      flushSync();
+      return;
+    }
+    cancelPendingFrame = cancelFrame;
+    scheduledMode = mode;
   };
 
   const flushSync = (writeOverride?: (data: string) => void): void => {
@@ -148,6 +179,7 @@ export const createWriteCoalescer = (
     if (disposed || chunk.length === 0) {
       return;
     }
+    const pendingBytesBefore = pendingBytes;
     pending.push(chunk);
     pendingBytes += chunk.length;
     if (pendingBytes > getMaxPendingBytes()) {
@@ -157,23 +189,17 @@ export const createWriteCoalescer = (
       flushSync();
       return;
     }
+    const mode = resolveScheduleMode({ nextChunk: chunk, pendingBytesBefore });
     if (cancelPendingFrame === null) {
-      const mode = resolveScheduleMode();
-      const cancelFrame = scheduleByMode(mode, () => {
-        cancelPendingFrame = null;
-        if (!shouldFlushScheduledFrame()) {
-          return;
-        }
-        flushSync();
-      }, customScheduleFrame);
-      if (cancelFrame === null) {
-        if (!shouldFlushScheduledFrame()) {
-          return;
-        }
-        flushSync();
-        return;
-      }
-      cancelPendingFrame = cancelFrame;
+      armSchedule(mode);
+      return;
+    }
+    // Upgrade microtask → rAF when a later chunk enters a TUI: the first shell
+    // chunk may have scheduled a same-turn flush before the alt-screen CSI
+    // arrived, which would tear the first repaint (Codex PR review).
+    if (scheduledMode === "microtask" && mode === "raf") {
+      cancelScheduledFrame();
+      armSchedule("raf");
     }
   };
 
