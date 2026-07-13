@@ -898,7 +898,10 @@ function createStartSessionApi(ctx) {
 
           // Then try ALL default SSH keys as fallback (not just the first one!)
           // This is critical because different servers may have different keys in authorized_keys.
-          // Password-only hosts skip this entirely so terminal/SFTP/jump agree (issue #2079).
+          // Password-only hosts skip automatic default-key probing so terminal/SFTP/jump
+          // agree (issue #2079). Unlocked encrypted keys from an explicit passphrase
+          // retry are kept even for password-only targets when jump-host retry
+          // unlocked them (Codex review P2 on #2153 / canRetryWithEncryptedDefaultKeys).
           if (!isPasswordOnlyAuth) {
             if (usedDefaultKeyAsPrimary && allDefaultKeys.length > 0) {
               for (const keyInfo of allDefaultKeys) {
@@ -913,17 +916,19 @@ function createStartSessionApi(ctx) {
               // Single default key fallback (when user has configured other non-password auth)
               authMethods.push({ type: "publickey", key: defaultKeyInfo.privateKey, isDefault: true, id: "publickey-default" });
             }
+          }
 
-            // Add unlocked encrypted default keys (user provided passphrases for these)
-            for (const keyInfo of unlockedEncryptedKeys) {
-              authMethods.push({
-                type: "publickey",
-                key: keyInfo.privateKey,
-                passphrase: keyInfo.passphrase,
-                isDefault: true,
-                id: `publickey-encrypted-${keyInfo.keyName}`
-              });
-            }
+          // Unlocked encrypted keys always stay eligible after the user was
+          // prompted for their passphrase — discarding them here would waste
+          // that interaction when jump-host retry re-enters startSession.
+          for (const keyInfo of unlockedEncryptedKeys) {
+            authMethods.push({
+              type: "publickey",
+              key: keyInfo.privateKey,
+              passphrase: keyInfo.passphrase,
+              isDefault: true,
+              id: `publickey-encrypted-${keyInfo.keyName}`
+            });
           }
 
           // Finally try keyboard-interactive

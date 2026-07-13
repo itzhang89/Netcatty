@@ -880,6 +880,9 @@ function buildAuthHandler(options) {
   // Check if we need dynamic handler (have fallback options).
   // Password-only never treats default keys as fallbacks — only unlocked
   // encrypted keys (jump-chain retry) and keyboard-interactive remain.
+  // Callers that pass onAuthAttempt still get progress callbacks on the
+  // simple ordered path (createOrderedStringAuthHandler) so jump/SFTP UIs
+  // keep showing auth attempts after #2079 (Codex review P2).
   const hasFallbackOptions = fallbackKeys.length > 0 ||
     (!hasExplicitAgent && !isPasswordOnly && sshAgentSocket) ||
     unlockedEncryptedKeys.length > 0;
@@ -897,7 +900,7 @@ function buildAuthHandler(options) {
 
     const authPhase = createAuthPhase();
     return {
-      authHandler: createOrderedStringAuthHandler(authMethods, authPhase),
+      authHandler: createOrderedStringAuthHandler(authMethods, authPhase, onAuthAttempt),
       privateKey: effectivePrivateKey,
       agent: effectiveAgent,
       usedDefaultKeys: false,
@@ -1220,14 +1223,22 @@ function shouldSkipKiPasswordAutoFill(authPhase) {
  *
  * @param {string[]} order
  * @param {{ hadPartialSuccess: boolean, passwordAlreadySucceeded?: boolean }} authPhase
+ * @param {(label: string) => void} [onAuthAttempt] - optional progress callback
+ *   (jump/SFTP connection logs). Mirrors the dynamic authHandler's onAuthAttempt.
  * @returns {(methodsLeft: string[]|null, partialSuccess: boolean, callback: Function) => void}
  */
-function createOrderedStringAuthHandler(order, authPhase) {
+function createOrderedStringAuthHandler(order, authPhase, onAuthAttempt) {
   // Methods we actually offered (server got a chance to accept/reject).
   let attempted = new Set();
   // Methods that contributed a successful factor; never retried.
   const succeeded = new Set();
   let lastOffered = null;
+
+  const attemptLabel = (method) => {
+    if (method === "none") return "none (no credentials)";
+    if (method === "agent") return "SSH agent";
+    return method;
+  };
 
   return (methodsLeft, partialSuccess, callback) => {
     if (partialSuccess) {
@@ -1236,6 +1247,10 @@ function createOrderedStringAuthHandler(order, authPhase) {
       // Drop rejected/skipped attempts so a method that was not advertised
       // earlier can be offered now that the server is asking for it.
       attempted = new Set(succeeded);
+    } else if (lastOffered && methodsLeft !== null) {
+      // Server rejected the previous method (or finished a failed factor).
+      // Skip the initial methodsLeft===null probe which is not a rejection.
+      onAuthAttempt?.(`${attemptLabel(lastOffered)} rejected`);
     }
 
     const available = Array.isArray(methodsLeft) && methodsLeft.length > 0
@@ -1253,8 +1268,10 @@ function createOrderedStringAuthHandler(order, authPhase) {
       }
       attempted.add(method);
       lastOffered = method;
+      onAuthAttempt?.(attemptLabel(method));
       return callback(method);
     }
+    onAuthAttempt?.("all methods exhausted");
     return callback(false);
   };
 }

@@ -71,6 +71,34 @@ test("buildAuthHandler password-only does not offer default SSH keys (#2079)", (
   assert.equal(labels.includes("agent"), false);
 });
 
+test("buildAuthHandler password-only still fires onAuthAttempt for jump/SFTP progress", () => {
+  const attempts = [];
+  const auth = buildAuthHandler({
+    password: "secret",
+    username: "root",
+    // Default keys on disk used to force the dynamic path for progress only;
+    // after #2079 the simple ordered path must still report attempts.
+    defaultKeys: DEFAULT_KEYS,
+    allowAgentFallback: false,
+    onAuthAttempt: (label) => attempts.push(label),
+  });
+
+  collectAuthMethods(auth.authHandler);
+  assert.ok(
+    attempts.some((label) => label === "password" || label.includes("password")),
+    `expected password attempt callback; got ${attempts.join(" | ")}`,
+  );
+  assert.ok(
+    attempts.some((label) => label.includes("keyboard-interactive") || label.includes("exhausted")),
+    `expected KI or exhaustion callback; got ${attempts.join(" | ")}`,
+  );
+  assert.equal(
+    attempts.some((label) => /id_rsa|id_ed25519|default/.test(label)),
+    false,
+    `must not report default-key probes; got ${attempts.join(" | ")}`,
+  );
+});
+
 test("buildAuthHandler with no credentials still offers default keys", () => {
   const auth = buildAuthHandler({
     username: "root",
