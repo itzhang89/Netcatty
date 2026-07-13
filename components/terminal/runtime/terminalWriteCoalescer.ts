@@ -7,31 +7,67 @@ import {
   MAX_TERMINAL_UNBROKEN_WRITE_CHUNK_BYTES,
   MAX_TERMINAL_WRITE_QUEUE_DRAIN_BYTES,
 } from "./terminalFlowConstants";
-import { getTerminalOutputPressure } from "./terminalOutputPressure";
 import {
   createWriteCoalescer,
   type WriteCoalesceScheduleMode,
   type WriteCoalescer,
 } from "./writeCoalescer.ts";
 
+const ESC = String.fromCharCode(0x1b);
+const CSI_PRIVATE_INTRO = `${ESC}[?`;
+const ALT_SCREEN_DECSET = new Set(["47", "1047", "1049"]);
+
 /**
  * Detect CSI private-mode sequences that enter the alternate screen buffer
- * (DECSET 47 / 1047 / 1049). Used to schedule rAF before xterm has switched
- * `buffer.active.type`, so the first TUI repaint chunks still coalesce per frame.
+ * (DECSET 47 / 1047 / 1049), including incomplete tails split across PTY chunks.
+ * Used to schedule rAF before xterm has switched `buffer.active.type`.
+ *
+ * Intentionally avoids control-character regexes (eslint no-control-regex).
  */
 const looksLikeEnteringAlternateScreen = (data: string): boolean => {
-  if (!data.includes("\x1b[")) return false;
-  // ESC [ ? <params> h  — only SET (h), not RESET (l)
-  const pattern = /\x1b\[\?([0-9;]*)h/g;
-  for (
-    let match = pattern.exec(data);
-    match !== null;
-    match = pattern.exec(data)
-  ) {
-    const params = match[1]!.split(";").filter(Boolean);
-    if (params.some((param) => param === "47" || param === "1047" || param === "1049")) {
+  if (!data.includes(ESC)) return false;
+
+  let searchFrom = 0;
+  while (searchFrom < data.length) {
+    const start = data.indexOf(CSI_PRIVATE_INTRO, searchFrom);
+    if (start < 0) break;
+    let index = start + CSI_PRIVATE_INTRO.length;
+    const paramStart = index;
+    while (index < data.length) {
+      const code = data.charCodeAt(index);
+      // digits 0-9 or ';'
+      if ((code >= 0x30 && code <= 0x39) || code === 0x3b) {
+        index += 1;
+        continue;
+      }
+      break;
+    }
+    if (index >= data.length) {
+      // Incomplete CSI private mode at end of buffer — next chunk may finish it.
       return true;
     }
+    if (data.charAt(index) === "h") {
+      const params = data.slice(paramStart, index).split(";").filter(Boolean);
+      if (params.some((param) => ALT_SCREEN_DECSET.has(param))) {
+        return true;
+      }
+    }
+    searchFrom = start + 1;
+  }
+
+  // Trailing incomplete ESC / ESC[ / ESC[?… (split across PTY chunks).
+  const lastEsc = data.lastIndexOf(ESC);
+  if (lastEsc < 0) return false;
+  const tail = data.slice(lastEsc);
+  if (tail === ESC || tail === `${ESC}[`) return true;
+  if (tail.startsWith(CSI_PRIVATE_INTRO)) {
+    const rest = tail.slice(CSI_PRIVATE_INTRO.length);
+    for (let i = 0; i < rest.length; i += 1) {
+      const code = rest.charCodeAt(i);
+      if ((code >= 0x30 && code <= 0x39) || code === 0x3b) continue;
+      return false;
+    }
+    return true;
   }
   return false;
 };
@@ -279,10 +315,12 @@ export const enqueueCoalescedTerminalWrite = (
       // has switched buffer.active.type) so multi-chunk repaints stay atomic.
       // When rAF is unavailable (Node unit tests), prefer the "raf" mode so the
       // coalescer falls back to an immediate flush (legacy test contract).
-      resolveScheduleMode: ({ nextChunk }): WriteCoalesceScheduleMode => {
+      resolveScheduleMode: ({ pendingJoined }): WriteCoalesceScheduleMode => {
+        // Inspect the full pending buffer so alt-screen CSI split across PTY
+        // chunks (e.g. "\x1b[?104" + "9h...") still upgrades to rAF.
         if (
           isTerminalAlternateScreenActive(term)
-          || looksLikeEnteringAlternateScreen(nextChunk)
+          || looksLikeEnteringAlternateScreen(pendingJoined)
         ) {
           return "raf";
         }

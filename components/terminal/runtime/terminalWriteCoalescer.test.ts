@@ -470,6 +470,63 @@ test("uses the latest coalesced writer when pending output is flushed", () => {
   resetTerminalWriteCoalescer(term);
 });
 
+test("upgrades to rAF when alternate-screen CSI is split across PTY chunks", () => {
+  const term = {
+    buffer: { active: { type: "normal" } },
+  } as unknown as XTerm;
+  const writes: string[] = [];
+  const frames: Array<FrameRequestCallback> = [];
+  const originalRaf = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
+  const originalCancel = Object.getOwnPropertyDescriptor(globalThis, "cancelAnimationFrame");
+  const originalMicrotask = globalThis.queueMicrotask;
+  const microtasks: Array<() => void> = [];
+
+  Object.defineProperty(globalThis, "requestAnimationFrame", {
+    configurable: true,
+    value: (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    },
+  });
+  Object.defineProperty(globalThis, "cancelAnimationFrame", {
+    configurable: true,
+    value: () => {},
+  });
+  globalThis.queueMicrotask = (callback: () => void) => {
+    microtasks.push(callback);
+  };
+
+  try {
+    setTerminalWriteCoalescerByteCapResolver(term, () => 64 * 1024);
+    // Incomplete CSI private mode — should already prefer rAF (pending tail).
+    enqueueCoalescedTerminalWrite(term, "\x1b[?104", (data) => {
+      writes.push(data);
+    });
+    assert.equal(frames.length, 1);
+    assert.equal(microtasks.length, 0);
+
+    enqueueCoalescedTerminalWrite(term, "9hframe", (data) => {
+      writes.push(data);
+    });
+    assert.equal(frames.length, 1);
+    frames[0]!(0);
+    assert.deepEqual(writes, ["\x1b[?1049hframe"]);
+  } finally {
+    resetTerminalWriteCoalescer(term);
+    globalThis.queueMicrotask = originalMicrotask;
+    if (originalRaf) {
+      Object.defineProperty(globalThis, "requestAnimationFrame", originalRaf);
+    } else {
+      Reflect.deleteProperty(globalThis, "requestAnimationFrame");
+    }
+    if (originalCancel) {
+      Object.defineProperty(globalThis, "cancelAnimationFrame", originalCancel);
+    } else {
+      Reflect.deleteProperty(globalThis, "cancelAnimationFrame");
+    }
+  }
+});
+
 test("schedules rAF for chunks that enter the alternate screen from the normal buffer", () => {
   const term = {
     buffer: { active: { type: "normal" } },

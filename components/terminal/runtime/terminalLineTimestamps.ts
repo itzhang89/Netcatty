@@ -1156,10 +1156,16 @@ export const writeTerminalDataWithLineTimestamps = (
     return;
   }
 
-  // Under bulk/background pressure, skip registerMarker / segmenter work so the
-  // xterm write path stays close to Tabby. Flood dumps rarely need per-line
-  // history; quiet interactive output still records full timestamps.
+  // Under bulk/background pressure, skip registerMarker storms so the xterm
+  // write path stays close to Tabby. Reset segmenter state so the first quiet
+  // line after flood does not inherit a half-parsed escape / mid-line cursor.
   if (shouldDegradeTerminalSideWork(term)) {
+    const store = getTimestampStore(term);
+    store.segmenter.setAlternateScreenActive(
+      ((term.buffer?.active as { type?: string } | undefined)?.type) === "alternate",
+    );
+    store.segmenter.reset();
+    store.timestampOnlyPrefix = "";
     writeFallbackOnly(data, done);
     return;
   }
