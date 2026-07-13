@@ -27,6 +27,7 @@ type TimestampMarker = {
 type TimestampEntry = {
   marker: TimestampMarker;
   label: string;
+  disposeListener?: { dispose: () => void };
 };
 
 type TimestampStore = {
@@ -48,6 +49,8 @@ type TimestampStore = {
   timestampOnlyPrefix: string;
   /** Amortize prune cost across many registerMarker calls. */
   recordsSincePrune: number;
+  /** Disposed markers since last compact (drives write-path cleanup). */
+  disposedPendingCompact: number;
   /** Intern HH:MM:SS for the current wall-clock second. */
   labelCacheKey: number | null;
   labelCacheValue: string;
@@ -444,6 +447,7 @@ const getTimestampStore = (term: XTerm): TimestampStore => {
       listeners: new Set(),
       timestampOnlyPrefix: "",
       recordsSincePrune: 0,
+      disposedPendingCompact: 0,
       labelCacheKey: null,
       labelCacheValue: "",
     };
@@ -501,17 +505,26 @@ const drainOrphanedMarkers = (
   }
 };
 
-/** Cheap pass for paint paths: drop disposed holes only (no dedupe / capacity). */
+/** Cheap pass for paint/write paths: drop disposed holes only (no dedupe / capacity). */
 const compactDisposedMarkersOnly = (store: TimestampStore): void => {
+  if (store.disposedPendingCompact <= 0) {
+    // Still drop any disposed holes we notice, but skip the scan when we have
+    // no dispose signals and the list is empty.
+    if (store.entries.length === 0) return;
+  }
   const entries = store.entries;
   let write = 0;
   for (let read = 0; read < entries.length; read += 1) {
     const entry = entries[read];
-    if (entry.marker.isDisposed) continue;
+    if (entry.marker.isDisposed) {
+      entry.disposeListener?.dispose();
+      continue;
+    }
     entries[write] = entry;
     write += 1;
   }
   entries.length = write;
+  store.disposedPendingCompact = 0;
 };
 
 /**
@@ -584,6 +597,7 @@ const maybePruneTimestampEntries = (
 
 const resetTimestampStore = (store: TimestampStore) => {
   for (const entry of store.entries) {
+    entry.disposeListener?.dispose();
     entry.marker.dispose?.();
   }
   for (const marker of store.orphanedMarkers) {
@@ -594,6 +608,7 @@ const resetTimestampStore = (store: TimestampStore) => {
   store.segmenter.reset();
   store.timestampOnlyPrefix = "";
   store.recordsSincePrune = 0;
+  store.disposedPendingCompact = 0;
   store.labelCacheKey = null;
   store.labelCacheValue = "";
   notifyTimestampStore(store);
@@ -611,9 +626,15 @@ const recordTerminalLineTimestamp = (
   const marker = registerMarker?.call(term, cursorYOffset);
   if (!marker) return false;
 
-  // Intentionally no per-marker onDispose → filter(entries). xterm still
-  // marks isDisposed when scrollback trims; we compact lazily in bulk.
-  store.entries.push({ marker, label });
+  // Lightweight dispose signal only — never filter(entries) per dispose.
+  // Compaction happens in bulk on write/paint via compactDisposedMarkersOnly.
+  const entry: TimestampEntry = { marker, label };
+  entry.disposeListener = marker.onDispose?.(() => {
+    store.disposedPendingCompact += 1;
+    entry.disposeListener?.dispose();
+    entry.disposeListener = undefined;
+  });
+  store.entries.push(entry);
   if (!options.skipPrune) {
     maybePruneTimestampEntries(term, store);
   }
@@ -1130,10 +1151,11 @@ export const writeTerminalDataWithLineTimestamps = (
   }
 
   const store = getTimestampStore(term);
-  // Clears / scrollback wipes dispose markers without recording new stamps;
-  // compact disposed holes on every write so the store cannot retain 100k
-  // dead entries while the gutter is off.
-  compactDisposedMarkersOnly(store);
+  // Clears / scrollback wipes dispose markers without new stamps. Compact only
+  // when dispose signals arrived — not on every tiny write against a full store.
+  if (store.disposedPendingCompact > 0) {
+    compactDisposedMarkersOnly(store);
+  }
   store.segmenter.setAlternateScreenActive(
     ((term.buffer?.active as { type?: string } | undefined)?.type) === "alternate",
   );
