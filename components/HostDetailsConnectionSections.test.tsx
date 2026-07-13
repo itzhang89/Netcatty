@@ -8,6 +8,7 @@ import {
   applyEffectiveHostAuthMethodSelection,
   detachEffectiveHostIdentity,
   HostDetailsConnectionSections,
+  removeSelectedHostCredential,
 } from "./HostDetailsConnectionSections.tsx";
 import { TooltipProvider } from "./ui/tooltip.tsx";
 
@@ -195,6 +196,30 @@ test("detaching an inherited identity preserves the effective username", () => {
     ...host,
     identityId: "",
     username: "deploy",
+  });
+});
+
+test("removing a selected key resets stale agent settings for automatic auth", () => {
+  const host = {
+    id: "host-1",
+    label: "Host",
+    hostname: "example.com",
+    username: "root",
+    authMethod: "key",
+    authPolicyVersion: 1,
+    identityFileId: "key-1",
+    useSshAgent: false,
+  } as Host;
+
+  assert.deepEqual(removeSelectedHostCredential(host, "key"), {
+    ...host,
+    authMethod: "auto",
+    identityId: "",
+    identityFileId: undefined,
+    identityFilePaths: undefined,
+    identityAgent: undefined,
+    identitiesOnly: undefined,
+    useSshAgent: undefined,
   });
 });
 

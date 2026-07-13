@@ -37,6 +37,18 @@ export const detachEffectiveHostIdentity = (host: Host, effectiveUsername?: stri
     : {}),
 });
 
+export const removeSelectedHostCredential = (
+  host: Host,
+  effectiveAuthMethod: "auto" | "password" | "key" | "certificate",
+  effectiveUsername?: string,
+): Host => {
+  const authMethod = host.password ? "password" : "auto";
+  const selected = applyHostAuthMethodSelection(host, authMethod, effectiveAuthMethod);
+  return !selected.username?.trim() && effectiveUsername?.trim()
+    ? { ...selected, username: effectiveUsername }
+    : selected;
+};
+
 export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectionsProps> = ({
   t,
   form,
@@ -441,8 +453,11 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
                   size="icon"
                   className="h-6 w-6 shrink-0"
                   onClick={() => {
-                    update("identityFileId", undefined);
-                    update("authMethod", form.password ? "password" : "auto");
+                    setForm((previous: Host) => removeSelectedHostCredential(
+                      previous,
+                      effectiveAuthMethod,
+                      effectiveUsername,
+                    ));
                     setPendingReferenceKeyPath(null);
                     setSelectedCredentialType(null);
                   }}
