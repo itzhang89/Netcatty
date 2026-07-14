@@ -66,6 +66,10 @@ export type TerminalBackendApi = {
     sessionId: string,
     cb: (evt: { sessionId: string }) => void,
   ) => (() => void) | undefined;
+  onMoshSessionReady?: (
+    sessionId: string,
+    cb: (evt: { sessionId: string }) => void,
+  ) => (() => void) | undefined;
   onTelnetEchoMode?: (
     sessionId: string,
     cb: (evt: { sessionId: string; remoteEcho: boolean; localEcho: boolean }) => void,
@@ -195,5 +199,7 @@ export type TerminalSessionStartersContext = {
 export type TerminalSessionDataMeta = {
   droppedOutputMayAffectTerminalState?: boolean;
   droppedOutputAlternateScreenAction?: 'enter' | 'leave';
+  /** True while Mosh is still on the ephemeral SSH handshake PTY. */
+  moshHandshake?: boolean;
   terminalPerf?: NetcattyTerminalOutputPerfMeta;
 };

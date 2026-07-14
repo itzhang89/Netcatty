@@ -36,6 +36,7 @@ const authFailedListeners = new Map();
 const telnetAutoLoginCompleteListeners = new Map();
 const telnetAutoLoginCancelledListeners = new Map();
 const telnetEchoModeListeners = new Map();
+const moshSessionReadyListeners = new Map();
 const languageChangeListeners = new Set();
 const fullscreenChangeListeners = new Set();
 const windowShownListeners = new Set();
@@ -301,6 +302,7 @@ ipcRenderer.on("netcatty:exit", (_event, payload) => {
   telnetAutoLoginCompleteListeners.delete(sessionId);
   telnetAutoLoginCancelledListeners.delete(sessionId);
   telnetEchoModeListeners.delete(sessionId);
+  moshSessionReadyListeners.delete(sessionId);
   const pendingTimer = _mcpFlushTimers.get(sessionId);
   if (pendingTimer) {
     clearTimeout(pendingTimer);
@@ -432,6 +434,18 @@ ipcRenderer.on("netcatty:telnet:auto-login-cancelled", (_event, payload) => {
       cb(payload);
     } catch (err) {
       console.error("Telnet auto-login cancellation callback failed", err);
+    }
+  });
+});
+
+ipcRenderer.on("netcatty:mosh:ready", (_event, payload) => {
+  const set = moshSessionReadyListeners.get(payload.sessionId);
+  if (!set) return;
+  set.forEach((cb) => {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("Mosh session ready callback failed", err);
     }
   });
 });
@@ -789,6 +803,7 @@ const api = createPreloadApi({
   telnetAutoLoginCompleteListeners,
   telnetAutoLoginCancelledListeners,
   telnetEchoModeListeners,
+  moshSessionReadyListeners,
   terminalDataBacklog,
   terminalOutputPorts,
   terminalUrgentInputPorts,

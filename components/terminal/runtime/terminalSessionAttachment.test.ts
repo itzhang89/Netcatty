@@ -1184,3 +1184,51 @@ test("tryAttachSessionToTerminal closes orphan sessions after unmount", () => {
   assert.equal(dataSubscribed, false);
   assert.equal(ctx.sessionRef.current, null);
 });
+
+test("attachSessionToTerminal ignores mosh handshake output when marking connected", () => {
+  const { term } = createFakeTerm();
+  const statuses: string[] = [];
+  let onData: ((data: string, meta?: { moshHandshake?: boolean }) => void) | null = null;
+
+  const ctx = {
+    ...createContext(false),
+    sessionId: "session-1",
+    sessionRef: { current: null as string | null },
+    hasConnectedRef: { current: false },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null as (() => void) | null },
+    disposeExitRef: { current: null as (() => void) | null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    terminalBackend: {
+      onSessionData: (
+        _id: string,
+        cb: (data: string, meta?: { moshHandshake?: boolean }) => void,
+      ) => {
+        onData = cb;
+        return () => {};
+      },
+      onSessionExit: () => () => {},
+      writeToSession: () => {},
+      resizeSession: () => {},
+      setSessionFlowPaused: () => {},
+      ackSessionFlow: () => {},
+    },
+    updateStatus: (status: string) => {
+      statuses.push(status);
+      if (status === "connected") ctx.hasConnectedRef.current = true;
+    },
+    setError: () => {},
+    onSessionExit: () => {},
+  };
+
+  attachSessionToTerminal(ctx as never, term, "session-1");
+  onData?.("ssh handshake banner\r\n", { moshHandshake: true });
+  assert.deepEqual(statuses, []);
+  assert.equal(ctx.hasConnectedRef.current, false);
+
+  onData?.("alice@host:~$ ");
+  assert.deepEqual(statuses, ["connected"]);
+  assert.equal(ctx.hasConnectedRef.current, true);
+});

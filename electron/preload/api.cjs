@@ -344,6 +344,13 @@ function createPreloadApi(ctx) {
     telnetAutoLoginCancelledListeners.get(sessionId).add(cb);
     return () => telnetAutoLoginCancelledListeners.get(sessionId)?.delete(cb);
   },
+  onMoshSessionReady: (sessionId, cb) => {
+    if (!moshSessionReadyListeners.has(sessionId)) {
+      moshSessionReadyListeners.set(sessionId, new Set());
+    }
+    moshSessionReadyListeners.get(sessionId).add(cb);
+    return () => moshSessionReadyListeners.get(sessionId)?.delete(cb);
+  },
   onTelnetEchoMode: (sessionId, cb) => {
     if (!telnetEchoModeListeners.has(sessionId)) {
       telnetEchoModeListeners.set(sessionId, new Set());

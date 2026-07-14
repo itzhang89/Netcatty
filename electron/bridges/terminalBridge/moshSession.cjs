@@ -456,10 +456,16 @@ function createMoshSessionApi(ctx) {
         discard,
       } = createPtyOutputBuffer((data, meta) => {
         const contents = electronModule.webContents.fromId(session.webContentsId);
+        // Tag SSH-handshake output so the renderer does not treat the session
+        // as shell-ready yet. Startup commands / pending scripts must wait for
+        // mosh-client (issue #2199).
+        const handshakeMeta = session.moshHandshakePhase !== "mosh-client"
+          ? { ...(meta || {}), moshHandshake: true }
+          : meta;
         emitTerminalSessionData(contents, sessionId, data, {
           cols: session.cols,
           rows: session.rows,
-          meta,
+          meta: handshakeMeta,
         });
       }, {
         onPendingBytesChange: (bytes) => setBufferedOutputBytes(session, bytes),
@@ -631,6 +637,17 @@ function createMoshSessionApi(ctx) {
       session.proc = mcPty;
       session.pty = mcPty;
       session.moshHandshakePhase = "mosh-client";
+
+      // Notify the renderer that the interactive mosh shell is ready. This is
+      // distinct from the first SSH-handshake bytes (which can mark the
+      // session "connected" too early and fire startup/scripts into the
+      // ephemeral handshake PTY — issue #2199).
+      try {
+        const readyContents = electronModule.webContents.fromId(session.webContentsId);
+        readyContents?.send("netcatty:mosh:ready", { sessionId });
+      } catch {
+        // Best-effort; startup-command deferral falls back if the event is missed.
+      }
 
       // The SSH handshake just succeeded, so these credentials are known
       // good. Stash them so sshBridge can lazily open a best-effort companion

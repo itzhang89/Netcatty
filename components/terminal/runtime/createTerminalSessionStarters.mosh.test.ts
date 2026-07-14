@@ -1291,3 +1291,94 @@ test("startMosh rejects jump host chains instead of connecting directly", async 
   assert.equal(started, false);
   assert.match(error, /Mosh does not support jump host chains/);
 });
+
+test("startMosh defers startup commands until mosh-client is ready", async () => {
+  const sent: string[] = [];
+  const statuses: string[] = [];
+  let readyCb: ((evt: { sessionId: string }) => void) | null = null;
+  let dataCb: ((data: string, meta?: { moshHandshake?: boolean }) => void) | null = null;
+
+  const terminalBackend = {
+    backendAvailable: () => true,
+    telnetAvailable: () => true,
+    moshAvailable: () => true,
+    localAvailable: () => true,
+    serialAvailable: () => true,
+    execAvailable: () => true,
+    startSSHSession: async () => "ssh-session",
+    startTelnetSession: async () => "telnet-session",
+    startMoshSession: async () => "mosh-session",
+    startLocalSession: async () => "local-session",
+    startSerialSession: async () => "serial-session",
+    execCommand: async () => ({}),
+    onSessionData: (_id: string, cb: (data: string, meta?: { moshHandshake?: boolean }) => void) => {
+      dataCb = cb;
+      return noop;
+    },
+    onSessionExit: () => noop,
+    onMoshSessionReady: (_id: string, cb: (evt: { sessionId: string }) => void) => {
+      readyCb = cb;
+      return noop;
+    },
+    onChainProgress: () => noop,
+    writeToSession: (_id: string, data: string) => sent.push(data),
+    resizeSession: noop,
+  };
+
+  const ctx = {
+    host: {
+      id: "host-1",
+      label: "Example",
+      hostname: "example.test",
+      username: "alice",
+    },
+    keys: [],
+    identities: [],
+    resolvedChainHosts: [],
+    sessionId: "session-1",
+    startupCommand: "echo from-snippet",
+    terminalSettings: { startupCommandDelayMs: 0 },
+    terminalBackend,
+    sessionRef: { current: null as string | null },
+    hasConnectedRef: { current: false },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null as (() => void) | null },
+    disposeExitRef: { current: null as (() => void) | null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    updateStatus: (status: string) => statuses.push(status),
+    setStatus: noop,
+    setError: noop,
+    setNeedsAuth: noop,
+    setAuthRetryMessage: noop,
+    setAuthPassword: noop,
+    setProgressLogs: noop,
+    setProgressValue: noop,
+    setChainProgress: noop,
+  };
+
+  const term = {
+    cols: 120,
+    rows: 32,
+    write: noop,
+    writeln: noop,
+    scrollToBottom: noop,
+    modes: {},
+    options: {},
+  };
+
+  await createTerminalSessionStarters(ctx as never).startMosh(term as never);
+
+  // Handshake output must not mark the session connected or send startup input.
+  dataCb?.("ssh login banner\r\n", { moshHandshake: true });
+  assert.deepEqual(statuses, []);
+  assert.deepEqual(sent, []);
+  assert.ok(readyCb, "expected onMoshSessionReady subscription");
+
+  readyCb?.({ sessionId: "mosh-session" });
+  assert.deepEqual(statuses, ["connected"]);
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.ok(sent.some((chunk) => chunk.includes("echo from-snippet")));
+});

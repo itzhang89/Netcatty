@@ -1012,17 +1012,48 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
       });
 
+      // Defer startup commands until mosh-client is ready. The backend
+      // handshake uses an ephemeral SSH PTY first; writing too early lands
+      // input on that PTY and is lost on the swap (issue #2199).
+      let disposeMoshReady: (() => void) | undefined;
+      let cancelPendingStartupCommand: (() => void) | undefined;
+      const cleanupMoshStartupWait = () => {
+        disposeMoshReady?.();
+        disposeMoshReady = undefined;
+        cancelPendingStartupCommand?.();
+        cancelPendingStartupCommand = undefined;
+      };
+      const runMoshStartup = () => {
+        disposeMoshReady?.();
+        disposeMoshReady = undefined;
+        if (!ctx.hasConnectedRef.current) {
+          ctx.updateStatus("connected");
+        }
+        cancelPendingStartupCommand = scheduleStartupCommand(ctx, term, id, () => {
+          cancelPendingStartupCommand = undefined;
+        });
+      };
+
       if (!tryAttachSessionToTerminal(ctx, term, id, {
         onExitMessage: (evt) =>
           `\r\n[Mosh session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`,
+        onExit: cleanupMoshStartupWait,
         sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
         sudoAutofillCandidates: resolveSudoAutofillCandidates(),
       })) {
+        cleanupMoshStartupWait();
         abortSessionStartAfterUnmount();
         return;
       }
 
-      scheduleStartupCommand(ctx, term, id);
+      if (ctx.terminalBackend.onMoshSessionReady) {
+        disposeMoshReady = ctx.terminalBackend.onMoshSessionReady(id, () => {
+          runMoshStartup();
+        });
+      } else {
+        // Older bridges without the ready event: keep previous behavior.
+        scheduleStartupCommand(ctx, term, id);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       ctx.setError(message);

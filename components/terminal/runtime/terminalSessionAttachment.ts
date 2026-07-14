@@ -744,7 +744,10 @@ export const attachSessionToTerminal = (
       data = sudoAutofill?.handleOutput(data) ?? data;
       writeSessionData(ctx, term, data, ingressBytes, meta);
       ctx.onTerminalOutput?.(data, meta);
-      if (!ctx.hasConnectedRef.current) {
+      // Mosh SSH-handshake output is not a ready shell yet — wait for
+      // mosh-client (or netcatty:mosh:ready) before marking connected so
+      // startup commands / pending scripts do not hit the handshake PTY (#2199).
+      if (!ctx.hasConnectedRef.current && !meta?.moshHandshake) {
         ctx.updateStatus("connected");
         opts?.onConnected?.();
         setTimeout(() => {
