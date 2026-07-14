@@ -205,18 +205,31 @@ export const useSftpConnections = ({
 
       if (!activeTabId) return;
 
-      // Capture path/host before we replace the connection so same-endpoint
+      // Capture path/endpoint before we replace the connection so same-endpoint
       // auto-reconnect can land back where the user was browsing instead of home.
-      // Do not inherit path across hosts if a reconnect flag is still set while
-      // the user switches to a different target.
+      // Do not inherit path across endpoints (including same hostId with different
+      // hostname/port/user) if a reconnect flag is still set while switching.
       const previousConnection = getActivePane(side)?.connection;
       const previousPath = previousConnection?.currentPath;
-      const previousHostId = previousConnection?.isLocal ? "local" : previousConnection?.hostId;
-      const targetHostId = host === "local" ? "local" : host.id;
+      const previousConnectionKey = !previousConnection
+        ? null
+        : previousConnection.isLocal
+          ? "local"
+          : (connectionCacheKeyMapRef.current.get(previousConnection.id) ?? null);
+      const targetConnectionKey = host === "local"
+        ? "local"
+        : buildCacheKey(
+          host.id,
+          host.hostname,
+          host.port,
+          host.protocol,
+          host.sftpSudo,
+          host.username,
+        );
       if (
         reconnectingRef.current[side]
-        && previousHostId
-        && previousHostId !== targetHostId
+        && previousConnectionKey
+        && previousConnectionKey !== targetConnectionKey
       ) {
         reconnectingRef.current[side] = false;
       }
@@ -224,7 +237,7 @@ export const useSftpConnections = ({
       const sameEndpointReconnect =
         isReconnectAttempt
         && !!previousPath
-        && previousHostId === targetHostId;
+        && previousConnectionKey === targetConnectionKey;
       const effectiveInitialPath =
         options?.initialPath
         ?? (sameEndpointReconnect ? previousPath : undefined);
