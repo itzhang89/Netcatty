@@ -339,16 +339,16 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     });
 
     const tabs = s.leftTabs.tabs;
-    const existingTab = sessionChanged
-      ? null
-      : findReusableSftpSidePanelTab(
-        tabs,
-        activeHost.id,
-        connectionKey,
-        tabConnectionKeyMapRef.current,
-        hasBackendSession,
-        (connectionId) => s.getConnectionCacheKey?.(connectionId) ?? null,
-      );
+    // Prefer an existing healthy tab for this endpoint even after a terminal
+    // focus change — otherwise alternating sessions forceNewTab forever.
+    const existingTab = findReusableSftpSidePanelTab(
+      tabs,
+      activeHost.id,
+      connectionKey,
+      tabConnectionKeyMapRef.current,
+      hasBackendSession,
+      (connectionId) => s.getConnectionCacheKey?.(connectionId) ?? null,
+    );
     if (existingTab) {
       s.selectTab("left", existingTab.id);
       connectedKeyRef.current = connectionKey;
@@ -357,7 +357,13 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     }
 
     const currentConn = s.leftPane.connection;
-    const needsNewTab = !!(currentConn && currentConn.status === "connected");
+    // Replace the active connection in place when possible so session switches
+    // do not accumulate orphaned SFTP tabs/channels.
+    const needsNewTab = !!(
+      currentConn
+      && currentConn.status === "connected"
+      && currentConn.hostId !== activeHost.id
+    );
     const rememberedPath = lastBrowsedPathByConnectionKeyRef.current.get(connectionKey);
     const initialPath = resolveSftpAutoConnectPath({
       explicitPath:
