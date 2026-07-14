@@ -444,18 +444,17 @@ const writeSessionDataImmediate = (
     const prepareStartedAt = shouldMeasurePerf ? performance.now() : 0;
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
     const forcePromptNewLine = settings?.forcePromptNewLine ?? false;
-    // Bulk plain dumps (seq/logs): skip paste/prompt cosmetics. Never skip when
-    // forcePromptNewLine is on — prompt placement is correctness. Always run the
-    // stateful sync-block filter: a chunk may look "plain" (no ESC) while it is
-    // the continuation of a split CSI held in filter state (Codex review).
+    // Always feed the filter so pending escape prefixes stay consistent.
+    // Decide the bulk-plain shortcut on *filtered* output: a chunk with no ESC
+    // can still receive a retained CSI prefix from filter state, and that
+    // output must go through erase-scrollback / prompt transforms (Codex).
+    const filteredData = filterTerminalSessionData(term, data);
     const bulkPlainPath = shouldDegradeTerminalSideWork(term)
-      && isPlainTerminalDisplayData(data)
+      && isPlainTerminalDisplayData(filteredData)
       && !forcePromptNewLine;
     let preparedDisplayData: string;
     let logDisplayData: string;
     let prepareMs = 0;
-    // Always feed the filter so pending escape prefixes stay consistent.
-    const filteredData = filterTerminalSessionData(term, data);
     if (bulkPlainPath) {
       preparedDisplayData = filteredData;
       logDisplayData = filteredData;

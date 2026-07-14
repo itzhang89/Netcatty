@@ -184,6 +184,16 @@ const runQueuedWrite = (
   let completed = false;
   let currentDrainBytes = 0;
   let syncStepsSinceYield = 0;
+  let turnStartedAt = performance.now();
+
+  const deferAndResume = (): void => {
+    syncStepsSinceYield = 0;
+    currentDrainBytes = 0;
+    deferStep(() => {
+      turnStartedAt = performance.now();
+      runNext();
+    });
+  };
 
   const runNext = (): void => {
     if (completed) {
@@ -204,9 +214,7 @@ const runQueuedWrite = (
       currentDrainBytes > 0
       && currentDrainBytes + step.bytes > item.maxDrainBytes
     ) {
-      currentDrainBytes = 0;
-      syncStepsSinceYield = 0;
-      deferStep(runNext);
+      deferAndResume();
       return;
     }
     index += 1;
@@ -221,18 +229,18 @@ const runQueuedWrite = (
       // flood merges preserve writeLargeTerminalBatch drain-budget pacing
       // instead of forcing a timer after every shard.
       if (step.yieldAfter && index < item.steps.length) {
-        currentDrainBytes = 0;
-        syncStepsSinceYield = 0;
-        deferStep(runNext);
+        deferAndResume();
         return;
       }
-      // Flood-merged items can hold thousands of tiny sync steps. Without a
-      // hop limit, continueAfterStep → runNext recursion blows the stack.
+      // Flood-merged items can hold thousands of tiny sync steps. Bound stack
+      // depth and wall-clock time so the main thread stays under the turn budget.
       if (index < item.steps.length) {
         syncStepsSinceYield += 1;
-        if (syncStepsSinceYield >= MAX_SYNC_MERGED_STEPS_BEFORE_YIELD) {
-          syncStepsSinceYield = 0;
-          deferStep(runNext);
+        if (
+          syncStepsSinceYield >= MAX_SYNC_MERGED_STEPS_BEFORE_YIELD
+          || performance.now() - turnStartedAt >= WRITE_QUEUE_TURN_BUDGET_MS
+        ) {
+          deferAndResume();
           return;
         }
       }
