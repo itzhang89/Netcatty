@@ -421,6 +421,10 @@ export const writeSessionData = (
   );
 };
 
+/** True when a batch has no ESC/C1 CSI — safe to skip TUI/filter transforms. */
+const isPlainTerminalDisplayData = (data: string): boolean =>
+  !data.includes("\x1b") && !data.includes("\x9b");
+
 const writeSessionDataImmediate = (
   ctx: TerminalSessionStartersContext,
   term: XTerm,
@@ -429,37 +433,60 @@ const writeSessionDataImmediate = (
   writeOptions: TerminalSessionWriteOptions = {},
 ) => {
   const flow = getFlowController(ctx, term);
+  // Tabby-like: under bulk pressure, force a yield after sizable shards so the
+  // event loop can paint/input between xterm parses (serial queue otherwise
+  // chains the next write the moment the callback fires).
+  const bulkYieldAfter = shouldDegradeTerminalSideWork(term)
+    && ingressBytes >= XTERM_WRITE_CALLBACK_FAST_PATH_MAX_BYTES;
   enqueueTerminalWrite(term, ingressBytes, (done) => {
     const shouldMeasurePerf = Boolean(writeOptions.perfTrace);
     const queueItemStartedAt = shouldMeasurePerf ? performance.now() : 0;
     const prepareStartedAt = shouldMeasurePerf ? performance.now() : 0;
     const settings = ctx.terminalSettingsRef?.current ?? ctx.terminalSettings;
-    const filteredData = filterTerminalSessionData(term, data);
-    const displayData = appendEraseScrollbackAfterFullErases(filteredData, {
-      wipeScrollback: settings?.clearWipesScrollback ?? true,
-      normalScreen: term.buffer?.active?.type !== "alternate",
-    });
-    const forcePromptNewLine = settings?.forcePromptNewLine ?? false;
-    if (!forcePromptNewLine && ctx.promptLineBreakStateRef?.current) {
-      ctx.promptLineBreakStateRef.current.pendingCommand = false;
-      ctx.promptLineBreakStateRef.current.suppressNextPromptCache = false;
+    // Bulk plain dumps (seq/logs): skip paste/prompt/sync-block prep. Those only
+    // matter for ESC-bearing / interactive streams; Tabby has no equivalent work
+    // on the write path. Display bytes are unchanged for plain text.
+    const bulkPlainPath = shouldDegradeTerminalSideWork(term)
+      && isPlainTerminalDisplayData(data);
+    let preparedDisplayData: string;
+    let logDisplayData: string;
+    let forcePromptNewLine = false;
+    let prepareMs = 0;
+    if (bulkPlainPath) {
+      preparedDisplayData = data;
+      logDisplayData = data;
+      prepareMs = shouldMeasurePerf ? performance.now() - prepareStartedAt : 0;
+    } else {
+      const filteredData = filterTerminalSessionData(term, data);
+      const displayData = appendEraseScrollbackAfterFullErases(filteredData, {
+        wipeScrollback: settings?.clearWipesScrollback ?? true,
+        normalScreen: term.buffer?.active?.type !== "alternate",
+      });
+      forcePromptNewLine = settings?.forcePromptNewLine ?? false;
+      if (!forcePromptNewLine && ctx.promptLineBreakStateRef?.current) {
+        ctx.promptLineBreakStateRef.current.pendingCommand = false;
+        ctx.promptLineBreakStateRef.current.suppressNextPromptCache = false;
+      }
+      const pasteDisplayData = prepareTerminalDataForUserPasteDisplay(term, displayData);
+      preparedDisplayData = prepareTerminalDataForPromptLineBreak(
+        term,
+        pasteDisplayData,
+        ctx.promptLineBreakStateRef?.current,
+        forcePromptNewLine,
+      );
+      logDisplayData = pasteDisplayData;
+      prepareMs = shouldMeasurePerf ? performance.now() - prepareStartedAt : 0;
     }
-    const pasteDisplayData = prepareTerminalDataForUserPasteDisplay(term, displayData);
-    const preparedDisplayData = prepareTerminalDataForPromptLineBreak(
-      term,
-      pasteDisplayData,
-      ctx.promptLineBreakStateRef?.current,
-      forcePromptNewLine,
-    );
-    const prepareMs = shouldMeasurePerf ? performance.now() - prepareStartedAt : 0;
-    ctx.onTerminalLogData?.(pasteDisplayData);
+    ctx.onTerminalLogData?.(logDisplayData);
     const clearPasteResidualAndCapture = () => {
+      if (bulkPlainPath) return;
       const cleanupData = clearPasteResidualAfterTerminalWrite(term);
       if (cleanupData) {
         ctx.onTerminalLogData?.(cleanupData);
       }
     };
     const syncPrompt = () => {
+      if (bulkPlainPath) return;
       if (forcePromptNewLine) {
         syncPromptLineBreakState(term, ctx.promptLineBreakStateRef?.current);
       }
@@ -522,10 +549,13 @@ const writeSessionDataImmediate = (
             totalMs: roundMs(now - queueItemStartedAt),
             deferredAck: deferFlowAck,
             lineTimestamps: summarizeLineTimestampPerf(lineTimestampPerf),
+            bulkPlainPath,
           });
         }
         callback();
       };
+      // writeTerminalDataWithLineTimestamps already falls through to term.write
+      // when shouldDegradeTerminalSideWork is true (no registerMarker storms).
       writeTerminalDataWithLineTimestamps(
         term,
         preparedDisplayData,
@@ -578,8 +608,9 @@ const writeSessionDataImmediate = (
     });
   }, {
     deferStart: writeOptions.deferStart,
-    // Intermediate plain shards set yieldAfter via writeLargeTerminalBatch.
-    yieldAfter: writeOptions.yieldAfter,
+    // Intermediate plain shards set yieldAfter via writeLargeTerminalBatch;
+    // bulk pressure also yields after sizable items (Tabby FlowControl intent).
+    yieldAfter: writeOptions.yieldAfter === true || bulkYieldAfter,
   });
 };
 
