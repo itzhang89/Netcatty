@@ -296,11 +296,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const pendingScriptHandledRef = useRef<Snippet | null>(null);
   // Mosh marks status=connected during the SSH handshake so interactive
   // prompts remain reachable. Connect/pending scripts must wait until
-  // mosh-client is ready (#2199). Re-subscribe on every connecting
-  // attempt: closeSession clears preload ready listeners for the session id.
-  // moshStatusRef is declared next to status state below.
+  // mosh-client is ready (#2199). closeSession clears preload ready
+  // listeners for this session id — resubscribe synchronously before each
+  // startMosh (not only in a useEffect, which can lose a race with reconnect).
   const [moshShellReady, setMoshShellReady] = useState(() => !host.moshEnabled);
-  const [moshConnectEpoch, setMoshConnectEpoch] = useState(0);
+  const disposeMoshReadyRef = useRef<(() => void) | null>(null);
   const [saveRecordingOpen, setSaveRecordingOpen] = useState(false);
   const [recordedCode, setRecordedCode] = useState('');
   const recorder = useScriptRecorder(sessionId);
@@ -612,8 +612,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const statusRef = useRef<TerminalSession["status"]>(status);
   statusRef.current = status;
-  // Tracks previous status for mosh ready re-subscribe (must live after status state).
-  const moshStatusRef = useRef<TerminalSession["status"]>(status);
   const getSessionConnectedRef = useRef(() => statusRef.current === "connected" && Boolean(sessionRef.current));
   getSessionConnectedRef.current = () => statusRef.current === "connected" && Boolean(sessionRef.current);
   const sudoAutofillRef = useRef<SudoPasswordAutofill | null>(null);
@@ -1629,39 +1627,39 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       connectScriptsConsumedRef.current = false;
       connectScriptsCompletedIdsRef.current = new Set();
     }
-  }, [status]);
-
-  useEffect(() => {
-    if (host.moshEnabled && status === 'connecting' && moshStatusRef.current !== 'connecting') {
-      // Manual retry and auto-reconnect both land here. Bump the epoch so the
-      // ready subscription is recreated after closeSession cleared listeners.
-      setMoshConnectEpoch((epoch) => epoch + 1);
-      setMoshShellReady(false);
-    }
     if (status === 'disconnected' && host.moshEnabled) {
       setMoshShellReady(false);
     }
-    moshStatusRef.current = status;
   }, [host.moshEnabled, status]);
 
-  useEffect(() => {
+  // Synchronously (re)register the mosh ready listener. Must run before
+  // startMosh on retry: cleanupSession/closeSession wipes preload listeners,
+  // and a useEffect-only resubscribe can race a fast passwordless handshake.
+  const prepareMoshReadySubscription = useCallback(() => {
+    disposeMoshReadyRef.current?.();
+    disposeMoshReadyRef.current = null;
     if (!host.moshEnabled) {
       setMoshShellReady(true);
       return;
     }
-    // Older bridges without onMoshSessionReady must not block scripts forever.
     if (!terminalBackend.onMoshSessionReady) {
+      // Older bridges without the ready event must not block scripts forever.
       setMoshShellReady(true);
       return;
     }
     setMoshShellReady(false);
-    const dispose = terminalBackend.onMoshSessionReady(sessionId, () => {
+    disposeMoshReadyRef.current = terminalBackend.onMoshSessionReady(sessionId, () => {
       setMoshShellReady(true);
-    });
+    }) ?? null;
+  }, [host.moshEnabled, sessionId, terminalBackend]);
+
+  useEffect(() => {
+    prepareMoshReadySubscription();
     return () => {
-      dispose?.();
+      disposeMoshReadyRef.current?.();
+      disposeMoshReadyRef.current = null;
     };
-  }, [host.moshEnabled, moshConnectEpoch, sessionId, terminalBackend]);
+  }, [prepareMoshReadySubscription]);
 
   useEffect(() => {
     if (status !== "disconnected") return;
@@ -2356,6 +2354,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       suppressHostStartupCommandRef.current = true;
     }
     cleanupSession();
+    // closeSession wiped preload ready listeners — re-arm before startMosh so a
+    // fast handshake cannot emit netcatty:mosh:ready into an empty map.
+    prepareMoshReadySubscription();
     const term = termRef.current;
     // Claim a fresh retry token. If the user cancels / closes / unmounts /
     // kicks off another retry while the chained writes below are still
@@ -2391,6 +2392,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       } else if (host.protocol === "telnet") {
         sessionStarters.startTelnet(term);
       } else if (host.moshEnabled) {
+        // Defensive: xterm.write may fire after another cleanup raced us.
+        prepareMoshReadySubscription();
         sessionStarters.startMosh(term);
       } else if (host.etEnabled) {
         sessionStarters.startEt(term);
