@@ -349,6 +349,8 @@ declare global {
         meta?: {
           droppedOutputMayAffectTerminalState?: boolean;
           droppedOutputAlternateScreenAction?: "enter" | "leave";
+          /** True while Mosh is still on the ephemeral SSH handshake PTY. */
+          moshHandshake?: boolean;
           terminalPerf?: NetcattyTerminalOutputPerfMeta;
         },
       ) => void,
@@ -363,6 +365,11 @@ declare global {
       cb: (evt: { sessionId: string }) => void
     ): () => void;
     onTelnetAutoLoginCancelled?(
+      sessionId: string,
+      cb: (evt: { sessionId: string }) => void
+    ): () => void;
+    /** Fires after Mosh swaps from the SSH handshake PTY to mosh-client. */
+    onMoshSessionReady?(
       sessionId: string,
       cb: (evt: { sessionId: string }) => void
     ): () => void;

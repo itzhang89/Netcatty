@@ -294,6 +294,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const connectScriptsInFlightRef = useRef(false);
   const pendingScriptRunIdRef = useRef<string | null>(null);
   const pendingScriptHandledRef = useRef<Snippet | null>(null);
+  // Mosh marks status=connected during the SSH handshake so interactive
+  // prompts remain reachable. Connect/pending scripts must wait until
+  // mosh-client is ready (#2199). closeSession clears preload ready
+  // listeners for this session id — resubscribe synchronously before each
+  // startMosh (not only in a useEffect, which can lose a race with reconnect).
+  const [moshShellReady, setMoshShellReady] = useState(() => !host.moshEnabled);
+  const disposeMoshReadyRef = useRef<(() => void) | null>(null);
   const [saveRecordingOpen, setSaveRecordingOpen] = useState(false);
   const [recordedCode, setRecordedCode] = useState('');
   const recorder = useScriptRecorder(sessionId);
@@ -1620,7 +1627,39 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       connectScriptsConsumedRef.current = false;
       connectScriptsCompletedIdsRef.current = new Set();
     }
-  }, [status]);
+    if (status === 'disconnected' && host.moshEnabled) {
+      setMoshShellReady(false);
+    }
+  }, [host.moshEnabled, status]);
+
+  // Synchronously (re)register the mosh ready listener. Must run before
+  // startMosh on retry: cleanupSession/closeSession wipes preload listeners,
+  // and a useEffect-only resubscribe can race a fast passwordless handshake.
+  const prepareMoshReadySubscription = useCallback(() => {
+    disposeMoshReadyRef.current?.();
+    disposeMoshReadyRef.current = null;
+    if (!host.moshEnabled) {
+      setMoshShellReady(true);
+      return;
+    }
+    if (!terminalBackend.onMoshSessionReady) {
+      // Older bridges without the ready event must not block scripts forever.
+      setMoshShellReady(true);
+      return;
+    }
+    setMoshShellReady(false);
+    disposeMoshReadyRef.current = terminalBackend.onMoshSessionReady(sessionId, () => {
+      setMoshShellReady(true);
+    }) ?? null;
+  }, [host.moshEnabled, sessionId, terminalBackend]);
+
+  useEffect(() => {
+    prepareMoshReadySubscription();
+    return () => {
+      disposeMoshReadyRef.current?.();
+      disposeMoshReadyRef.current = null;
+    };
+  }, [prepareMoshReadySubscription]);
 
   useEffect(() => {
     if (status !== "disconnected") return;
@@ -1651,6 +1690,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   useEffect(() => {
     if (status !== 'connected') return;
+    if (host.moshEnabled && !moshShellReady) return;
 
     let pendingOne: Snippet | undefined;
     if (pendingScript && isScriptSnippet(pendingScript)) {
@@ -1784,7 +1824,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }, 400);
 
     return () => window.clearTimeout(timer);
-  }, [host, isPendingScriptAlreadyHandled, pendingScript, pendingScriptId, sessionId, snippets, status, t]);
+  }, [host, isPendingScriptAlreadyHandled, moshShellReady, pendingScript, pendingScriptId, sessionId, snippets, status, t]);
 
   useEffect(() => {
     return registerScreenSnapshotProvider(sessionId, () => {
@@ -2314,6 +2354,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       suppressHostStartupCommandRef.current = true;
     }
     cleanupSession();
+    // closeSession wiped preload ready listeners — re-arm before startMosh so a
+    // fast handshake cannot emit netcatty:mosh:ready into an empty map.
+    prepareMoshReadySubscription();
     const term = termRef.current;
     // Claim a fresh retry token. If the user cancels / closes / unmounts /
     // kicks off another retry while the chained writes below are still
@@ -2349,6 +2392,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       } else if (host.protocol === "telnet") {
         sessionStarters.startTelnet(term);
       } else if (host.moshEnabled) {
+        // Defensive: xterm.write may fire after another cleanup raced us.
+        prepareMoshReadySubscription();
         sessionStarters.startMosh(term);
       } else if (host.etEnabled) {
         sessionStarters.startEt(term);

@@ -485,6 +485,34 @@ test("startMoshSession forwards terminal shortcut escape sequences after the cli
   assert.deepEqual(h.spawns[0].writes, []);
 });
 
+test("startMoshSession tags handshake output and emits ready after mosh-client swap", async (t) => {
+  const h = makeHarness(t);
+  await h.bridge.startMoshSession(h.event, h.options, { moshClientLookup: h.lookupOpts });
+
+  h.spawns[0].emitData("login banner\r\n");
+  // Pty output is coalesced and flushed on the next turn.
+  await new Promise((resolve) => setImmediate(resolve));
+  const handshakeData = h.sent.find((evt) =>
+    evt.channel === "netcatty:data" && evt.payload?.data?.includes("login banner"),
+  );
+  assert.ok(handshakeData, "expected handshake data on netcatty:data");
+  assert.equal(handshakeData.payload.meta?.moshHandshake, true);
+
+  assert.equal(
+    h.sent.some((evt) => evt.channel === "netcatty:mosh:ready"),
+    false,
+    "ready must not fire before the mosh-client swap",
+  );
+
+  h.spawns[0].emitData("MOSH CONNECT 60002 ABCDEFGHIJKLMNOPQRSTUV==\r\n");
+  h.spawns[0].emitExit({ exitCode: 0, signal: 0 });
+
+  const ready = h.sent.find((evt) => evt.channel === "netcatty:mosh:ready");
+  assert.ok(ready, "expected netcatty:mosh:ready after client swap");
+  assert.equal(ready.payload.sessionId, "mosh-test-session");
+  assert.equal(h.sessions.get("mosh-test-session")?.moshHandshakePhase, "mosh-client");
+});
+
 test("startMoshSession stashes stats-companion auth after a successful handshake", async (t) => {
   const h = makeHarness(t);
   await h.bridge.startMoshSession(

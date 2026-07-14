@@ -744,6 +744,11 @@ export const attachSessionToTerminal = (
       data = sudoAutofill?.handleOutput(data) ?? data;
       writeSessionData(ctx, term, data, ingressBytes, meta);
       ctx.onTerminalOutput?.(data, meta);
+      // Mark connected on first visible output so the connection overlay
+      // dismisses and interactive Mosh handshake prompts (password/OTP)
+      // remain reachable. Startup commands / pending scripts are gated
+      // separately on netcatty:mosh:ready so they do not hit the handshake
+      // PTY (#2199).
       if (!ctx.hasConnectedRef.current) {
         ctx.updateStatus("connected");
         opts?.onConnected?.();

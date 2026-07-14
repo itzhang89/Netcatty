@@ -148,6 +148,11 @@ export const useTerminalBackend = () => {
     return bridge?.onTelnetAutoLoginCancelled?.(sessionId, cb);
   }, []);
 
+  const onMoshSessionReady = useCallback((sessionId: string, cb: (evt: { sessionId: string }) => void) => {
+    const bridge = netcattyBridge.get();
+    return bridge?.onMoshSessionReady?.(sessionId, cb);
+  }, []);
+
   const onTelnetEchoMode = useCallback((sessionId: string, cb: (evt: { sessionId: string; remoteEcho: boolean; localEcho: boolean }) => void) => {
     const bridge = netcattyBridge.get();
     return bridge?.onTelnetEchoMode?.(sessionId, cb);
@@ -327,59 +332,76 @@ export const useTerminalBackend = () => {
   // property dep (`}, [terminalBackend.onHostKeyVerification])`) it
   // couldn't statically prove safe.
   return useMemo(
-    () => ({
-      backendAvailable,
-      telnetAvailable,
-      moshAvailable,
-      etAvailable,
-      localAvailable,
-      serialAvailable,
-      execAvailable,
-      openExternalAvailable,
-      startSSHSession,
-      startTelnetSession,
-      startMoshSession,
-      startEtSession,
-      startLocalSession,
-      startSerialSession,
-      listSerialPorts,
-      serialYmodemAvailable,
-      serialYmodemReceiveAvailable,
-      selectFileAvailable,
-      selectDirectoryAvailable,
-      sendSerialYmodem,
-      receiveSerialYmodem,
-      selectFile,
-      selectDirectory,
-      startZmodemDragDropUpload,
-      cancelZmodem,
-      onZmodemEvent,
-      execCommand,
-      setupOsc7Tracking,
-      getSessionPwd,
-      getSessionRemoteInfo,
-      getSessionDistroInfo,
-      getServerStats,
-      writeToSession,
-      interruptSession,
-      resizeSession,
-      setSessionFlowPaused,
-      ackSessionFlow,
-      closeSession,
-      setSessionEncoding,
-      onSessionData,
-      onSessionExit,
-      onTelnetAutoLoginComplete,
-      onTelnetAutoLoginCancelled,
-      onTelnetEchoMode,
-      onChainProgress,
-      onConnectionReuseFallback,
-      onWindowFullScreenChanged,
-      onWindowShown,
-      onHostKeyVerification,
-      respondHostKeyVerification,
-      openExternal,
-    }),
+    () => {
+      const api = {
+        backendAvailable,
+        telnetAvailable,
+        moshAvailable,
+        etAvailable,
+        localAvailable,
+        serialAvailable,
+        execAvailable,
+        openExternalAvailable,
+        startSSHSession,
+        startTelnetSession,
+        startMoshSession,
+        startEtSession,
+        startLocalSession,
+        startSerialSession,
+        listSerialPorts,
+        serialYmodemAvailable,
+        serialYmodemReceiveAvailable,
+        selectFileAvailable,
+        selectDirectoryAvailable,
+        sendSerialYmodem,
+        receiveSerialYmodem,
+        selectFile,
+        selectDirectory,
+        startZmodemDragDropUpload,
+        cancelZmodem,
+        onZmodemEvent,
+        execCommand,
+        setupOsc7Tracking,
+        getSessionPwd,
+        getSessionRemoteInfo,
+        getSessionDistroInfo,
+        getServerStats,
+        writeToSession,
+        interruptSession,
+        resizeSession,
+        setSessionFlowPaused,
+        ackSessionFlow,
+        closeSession,
+        setSessionEncoding,
+        onSessionData,
+        onSessionExit,
+        onTelnetAutoLoginComplete,
+        onTelnetAutoLoginCancelled,
+        onTelnetEchoMode,
+        onChainProgress,
+        onConnectionReuseFallback,
+        onWindowFullScreenChanged,
+        onWindowShown,
+        onHostKeyVerification,
+        respondHostKeyVerification,
+        openExternal,
+      };
+      // Only surface onMoshSessionReady when the bridge actually implements it.
+      // A always-truthy wrapper would skip the documented no-event fallback and
+      // leave mosh startup/scripts waiting forever on older builds.
+      Object.defineProperty(api, "onMoshSessionReady", {
+        enumerable: true,
+        configurable: true,
+        get() {
+          const bridge = netcattyBridge.get();
+          if (typeof bridge?.onMoshSessionReady !== "function") {
+            return undefined;
+          }
+          return onMoshSessionReady;
+        },
+      });
+      return api;
+    },
     [
       backendAvailable,
       telnetAvailable,
@@ -424,6 +446,7 @@ export const useTerminalBackend = () => {
       onSessionExit,
       onTelnetAutoLoginComplete,
       onTelnetAutoLoginCancelled,
+      onMoshSessionReady,
       onTelnetEchoMode,
       onChainProgress,
       onConnectionReuseFallback,

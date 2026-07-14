@@ -4,6 +4,10 @@ function createPreloadApi(ctx) {
   const terminalDataBacklog = ctx.terminalDataBacklog || null;
   const displayDataListeners = ctx.displayDataListeners || new Map();
   const closedTerminalDataSessions = ctx.closedTerminalDataSessions || null;
+  // Lightweight test contexts may omit this map; default so closeSession never throws.
+  if (!ctx.moshSessionReadyListeners) {
+    ctx.moshSessionReadyListeners = new Map();
+  }
   const markTerminalDataSessionOpen = (sessionId) => {
     if (!sessionId) return;
     closedTerminalDataSessions?.delete?.(sessionId);
@@ -250,6 +254,9 @@ function createPreloadApi(ctx) {
   closeSession: (sessionId) => {
     markTerminalDataSessionClosed(sessionId);
     telnetEchoModeListeners.delete(sessionId);
+    // closeSession sets session.closed before kill; mosh exit handlers skip
+    // the exit event in that case, so clear ready listeners here too.
+    moshSessionReadyListeners.delete(sessionId);
     ipcRenderer.send("netcatty:close", { sessionId });
   },
   setSessionEncoding: async (sessionId, encoding) => {
@@ -343,6 +350,13 @@ function createPreloadApi(ctx) {
     }
     telnetAutoLoginCancelledListeners.get(sessionId).add(cb);
     return () => telnetAutoLoginCancelledListeners.get(sessionId)?.delete(cb);
+  },
+  onMoshSessionReady: (sessionId, cb) => {
+    if (!moshSessionReadyListeners.has(sessionId)) {
+      moshSessionReadyListeners.set(sessionId, new Set());
+    }
+    moshSessionReadyListeners.get(sessionId).add(cb);
+    return () => moshSessionReadyListeners.get(sessionId)?.delete(cb);
   },
   onTelnetEchoMode: (sessionId, cb) => {
     if (!telnetEchoModeListeners.has(sessionId)) {
