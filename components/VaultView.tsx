@@ -1204,6 +1204,9 @@ export const vaultViewAreEqual = (
     prev.sessionCount === next.sessionCount &&
     prev.managedSources === next.managedSources &&
     prev.groupConfigs === next.groupConfigs &&
+    prev.showRecentHosts === next.showRecentHosts &&
+    prev.hostClickBehavior === next.hostClickBehavior &&
+    prev.showOnlyUngroupedHostsInRoot === next.showOnlyUngroupedHostsInRoot &&
     prev.terminalThemeId === next.terminalThemeId &&
     prev.terminalFontSize === next.terminalFontSize &&
     prev.navigateToSection === next.navigateToSection &&

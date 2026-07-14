@@ -53,7 +53,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
   React.useEffect(() => {
     setFocusedHostId(null);
     setFocusedGroupPath(null);
-  }, [selectedGroupPath, viewMode]);
+  }, [selectedGroupPath, viewMode, hostClickBehavior]);
 
   const activateHost = React.useCallback((host: Host) => {
     const action = resolveHostActivateAction({
@@ -717,6 +717,8 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                       hostClickBehavior={hostClickBehavior}
                       focusedHostId={focusedHostId}
                       onFocusHost={setFocusedHostId}
+                      focusedGroupPath={focusedGroupPath}
+                      onFocusGroup={setFocusedGroupPath}
 	                      getDropTargetClasses={(path) =>
 	                        getDropTargetClasses({ kind: "group", path })
 	                      }

@@ -68,6 +68,8 @@ interface HostTreeViewProps {
   hostClickBehavior?: HostClickBehavior;
   focusedHostId?: string | null;
   onFocusHost?: (hostId: string | null) => void;
+  focusedGroupPath?: string | null;
+  onFocusGroup?: (groupPath: string | null) => void;
   getDropTargetClasses?: (target: string) => string;
   setDragOverDropTarget?: (target: string | null) => void;
   groupConfigs?: GroupConfig[];
@@ -101,6 +103,8 @@ interface TreeNodeProps {
   hostClickBehavior?: HostClickBehavior;
   focusedHostId?: string | null;
   onFocusHost?: (hostId: string | null) => void;
+  focusedGroupPath?: string | null;
+  onFocusGroup?: (groupPath: string | null) => void;
   getDropTargetClasses?: (target: string) => string;
   setDragOverDropTarget?: (target: string | null) => void;
   groupConfigs: GroupConfig[];
@@ -133,9 +137,11 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   isMultiSelectMode,
   selectedHostIds,
   toggleHostSelection,
-  hostClickBehavior,
+  hostClickBehavior = 'connect',
   focusedHostId,
   onFocusHost,
+  focusedGroupPath,
+  onFocusGroup,
   getDropTargetClasses,
   setDragOverDropTarget,
   groupConfigs,
@@ -148,6 +154,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   const isInlineEditing = inlineEdit?.groupPath === node.path;
   const groupRowRef = useRef<HTMLDivElement>(null);
   const isExpanded = expandedPaths.has(node.path);
+  const isGroupFocused = hostClickBehavior === 'select' && focusedGroupPath === node.path;
 
   useEffect(() => {
     if (!isInlineEditing || !inlineEdit?.shouldScrollIntoView) return;
@@ -223,6 +230,11 @@ const TreeNode: React.FC<TreeNodeProps> = ({
         open={isExpanded}
         onOpenChange={() => {
           if (isInlineEditing) return;
+          if (hostClickBehavior === 'select' && focusedGroupPath !== node.path) {
+            onFocusGroup?.(node.path);
+            onFocusHost?.(null);
+            return;
+          }
           onToggle(node.path);
         }}
       >
@@ -234,6 +246,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
                 name={node.name}
                 depth={depth}
                 expanded={isExpanded}
+                selected={isGroupFocused}
                 hasChildren={hasChildren || node.hosts.length > 0}
                 count={hostsCountInNode}
                 editing={isInlineEditing}
@@ -343,6 +356,8 @@ const TreeNode: React.FC<TreeNodeProps> = ({
 	              hostClickBehavior={hostClickBehavior}
 	              focusedHostId={focusedHostId}
 	              onFocusHost={onFocusHost}
+	              focusedGroupPath={focusedGroupPath}
+	              onFocusGroup={onFocusGroup}
 	              getDropTargetClasses={getDropTargetClasses}
 	              setDragOverDropTarget={setDragOverDropTarget}
 	              groupConfigs={groupConfigs}
@@ -368,7 +383,10 @@ const TreeNode: React.FC<TreeNodeProps> = ({
 	              toggleHostSelection={toggleHostSelection}
 	              hostClickBehavior={hostClickBehavior}
 	              focusedHostId={focusedHostId}
-	              onFocusHost={onFocusHost}
+	              onFocusHost={(hostId) => {
+	                onFocusHost?.(hostId);
+	                if (hostId) onFocusGroup?.(null);
+	              }}
 	              groupConfigs={groupConfigs}
 	              groupDefaultsByPath={groupDefaultsByPath}
 	            />
@@ -578,6 +596,8 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
   hostClickBehavior,
   focusedHostId,
   onFocusHost,
+  focusedGroupPath,
+  onFocusGroup,
   getDropTargetClasses,
   setDragOverDropTarget,
   groupConfigs = [],
@@ -744,6 +764,8 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
           hostClickBehavior={hostClickBehavior}
           focusedHostId={focusedHostId}
           onFocusHost={onFocusHost}
+          focusedGroupPath={focusedGroupPath}
+          onFocusGroup={onFocusGroup}
 	          getDropTargetClasses={getDropTargetClasses}
 	          setDragOverDropTarget={setDragOverDropTarget}
 	          groupConfigs={groupConfigs}
@@ -768,7 +790,10 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
 	          toggleHostSelection={toggleHostSelection}
           hostClickBehavior={hostClickBehavior}
           focusedHostId={focusedHostId}
-          onFocusHost={onFocusHost}
+          onFocusHost={(hostId) => {
+            onFocusHost?.(hostId);
+            if (hostId) onFocusGroup?.(null);
+          }}
 	          groupConfigs={groupConfigs}
 	          groupDefaultsByPath={groupDefaultsByPath}
 	        />
