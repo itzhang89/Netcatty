@@ -861,15 +861,32 @@ async function downloadSftpToLocal(_event, payload) {
   if (isScpModeClient(client)) {
     throwIfAborted(payload.abortSignal);
     const transfer = createTransferFromAbortSignal(payload.abortSignal);
+    // Stage to a temp path first so a failed/cancelled transfer never truncates
+    // an existing local destination (matches SFTP branch behavior).
+    const stagedFilePath = tempDirBridge.getTempFilePath(
+      path.basename(payload.localPath || payload.remotePath || "download"),
+    );
     try {
-      await getScpBackendForClient(client).downloadFile(payload.remotePath, payload.localPath, {
+      await getScpBackendForClient(client).downloadFile(payload.remotePath, stagedFilePath, {
         transfer,
       });
       throwIfAborted(payload.abortSignal);
       if (transfer?.cancelled) {
         throw createAbortError(payload.abortSignal, "Transfer cancelled");
       }
+      try {
+        await fs.promises.rename(stagedFilePath, payload.localPath);
+      } catch (err) {
+        if (err?.code !== "EXDEV" && err?.code !== "EEXIST" && err?.code !== "EPERM") {
+          throw err;
+        }
+        await fs.promises.copyFile(stagedFilePath, payload.localPath);
+        await fs.promises.unlink(stagedFilePath);
+      }
       return { success: true, localPath: payload.localPath };
+    } catch (err) {
+      try { await fs.promises.unlink(stagedFilePath); } catch { /* ignore */ }
+      throw err;
     } finally {
       try { transfer?.detachAbortSignal?.(); } catch { /* ignore */ }
     }
@@ -917,15 +934,40 @@ async function uploadLocalToSftp(_event, payload) {
   if (isScpModeClient(client)) {
     throwIfAborted(payload.abortSignal);
     const transfer = createTransferFromAbortSignal(payload.abortSignal);
+    const backend = getScpBackendForClient(client);
+    // Upload to a staged remote name, then rename into place so a cancelled or
+    // failed transfer cannot leave a truncated original (matches SFTP path).
+    const stagedRemotePath = buildStagedRemotePath(payload.remotePath);
+    const backupRemotePath = buildBackupRemotePath(payload.remotePath);
     try {
-      await getScpBackendForClient(client).uploadFile(payload.localPath, payload.remotePath, {
-        transfer,
-      });
+      await backend.uploadFile(payload.localPath, stagedRemotePath, { transfer });
       throwIfAborted(payload.abortSignal);
       if (transfer?.cancelled) {
         throw createAbortError(payload.abortSignal, "Transfer cancelled");
       }
+      // Best-effort atomic replace: move existing target aside, then promote staged.
+      let movedExisting = false;
+      try {
+        await backend.rename(payload.remotePath, backupRemotePath);
+        movedExisting = true;
+      } catch {
+        // Destination may not exist yet.
+      }
+      try {
+        await backend.rename(stagedRemotePath, payload.remotePath);
+      } catch (renameErr) {
+        if (movedExisting) {
+          try { await backend.rename(backupRemotePath, payload.remotePath); } catch { /* ignore */ }
+        }
+        throw renameErr;
+      }
+      if (movedExisting) {
+        try { await backend.remove(backupRemotePath, { recursive: false }); } catch { /* ignore */ }
+      }
       return { success: true, remotePath: payload.remotePath };
+    } catch (err) {
+      try { await backend.remove(stagedRemotePath, { recursive: false }); } catch { /* ignore */ }
+      throw err;
     } finally {
       try { transfer?.detachAbortSignal?.(); } catch { /* ignore */ }
     }

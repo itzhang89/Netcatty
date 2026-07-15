@@ -30,7 +30,16 @@ test("buildSftpReuseCredentials only needs the live endpoint and sourceSessionId
     sourceSessionId: "session-live",
     reuseOnly: true,
     sudo: false,
+    fileProtocol: "auto",
   });
+});
+
+test("buildSftpReuseCredentials forwards host file protocol preference", () => {
+  const credentials = buildSftpReuseCredentials(
+    host({ hostname: "nas.example.com", username: "root", port: 22, sftpFileProtocol: "scp" }),
+    "session-nas",
+  );
+  assert.equal(credentials.fileProtocol, "scp");
 });
 
 test("buildSftpHostCredentials forwards system agent settings for target and jump hosts", () => {

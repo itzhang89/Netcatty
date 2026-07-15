@@ -86,7 +86,8 @@ function buildListCommand(remotePath) {
     '  elif [ -d "$f" ]; then t=d',
     '  else t=f; fi',
     '  mode=$(ls -ld -- "$f" 2>/dev/null | awk \'{print $1}\')',
-    '  size=$(wc -c < "$f" 2>/dev/null | tr -d " \t")',
+    // Use metadata only — never open the file (FIFOs/special files would hang on wc -c).
+    '  size=$(stat -c %s -- "$f" 2>/dev/null || stat -f %z -- "$f" 2>/dev/null || echo 0)',
     '  [ -z "$size" ] && size=0',
     '  mtime=$(date -r "$f" +%s 2>/dev/null || stat -c %Y -- "$f" 2>/dev/null || stat -f %m -- "$f" 2>/dev/null || echo 0)',
     // basename base64: prefer base64 -w0 (GNU), fallback base64, then od
@@ -116,7 +117,7 @@ function buildStatCommand(remotePath) {
     'elif [ -d "$p" ]; then t=d',
     'else t=f; fi',
     'mode=$(ls -ld -- "$p" 2>/dev/null | awk \'{print $1}\')',
-    'size=$(wc -c < "$p" 2>/dev/null | tr -d " \\t" || echo 0)',
+    'size=$(stat -c %s -- "$p" 2>/dev/null || stat -f %z -- "$p" 2>/dev/null || echo 0)',
     'mtime=$(date -r "$p" +%s 2>/dev/null || stat -c %Y -- "$p" 2>/dev/null || stat -f %m -- "$p" 2>/dev/null || echo 0)',
     'abs=$(cd "$(dirname -- "$p")" 2>/dev/null && printf "%s/%s\\n" "$(pwd -P 2>/dev/null || pwd)" "$(basename -- "$p")" || printf "%s\\n" "$p")',
     'printf "%s|%s|%s|%s|%s\\n" "$t" "${mode:-?}" "${size:-0}" "${mtime:-0}" "$abs"',

@@ -479,45 +479,79 @@ function createScpBackend(deps = {}) {
         else resolve();
       };
 
+      let processing = false;
+      const queue = [];
+      const processQueue = async () => {
+        if (processing || settled) return;
+        processing = true;
+        try {
+          while (queue.length > 0 && !settled) {
+            if (transfer?.cancelled) {
+              finish(new Error("Transfer cancelled"));
+              return;
+            }
+            const chunk = queue.shift();
+            try {
+              const events = parser.feed(chunk);
+              for (const ev of events) {
+                if (settled) return;
+                if (ev.type === "file-start") {
+                  gotFile = true;
+                  expectedSize = ev.size;
+                  stream.write(buildAck());
+                } else if (ev.type === "file-data") {
+                  const canContinue = writable.write(ev.data);
+                  transferred += ev.data.length;
+                  if (typeof onProgress === "function") {
+                    onProgress(transferred, expectedSize || transferred);
+                  }
+                  // Backpressure: wait for the local write stream to drain.
+                  if (canContinue === false) {
+                    await new Promise((resolveDrain) => {
+                      writable.once("drain", resolveDrain);
+                    });
+                  }
+                } else if (ev.type === "file-end") {
+                  stream.write(buildAck());
+                  if (typeof onProgress === "function") {
+                    onProgress(transferred, expectedSize || transferred);
+                  }
+                  finish(null);
+                  try { stream.close?.(); } catch { /* ignore */ }
+                  return;
+                } else if (ev.type === "directory") {
+                  stream.write(buildAck());
+                } else if (ev.type === "end-directory") {
+                  stream.write(buildAck());
+                } else if (ev.type === "time") {
+                  stream.write(buildAck());
+                }
+              }
+            } catch (err) {
+              finish(err);
+              return;
+            }
+          }
+        } finally {
+          processing = false;
+          if (!settled && queue.length > 0) {
+            void processQueue();
+          } else if (!settled && typeof stream.resume === "function") {
+            try { stream.resume(); } catch { /* ignore */ }
+          }
+        }
+      };
+
       stream.on("data", (chunk) => {
+        if (settled) return;
         if (transfer?.cancelled) {
           finish(new Error("Transfer cancelled"));
           return;
         }
-        try {
-          const events = parser.feed(chunk);
-          for (const ev of events) {
-            if (ev.type === "file-start") {
-              gotFile = true;
-              expectedSize = ev.size;
-              // ACK ready for data
-              stream.write(buildAck());
-            } else if (ev.type === "file-data") {
-              writable.write(ev.data);
-              transferred += ev.data.length;
-              if (typeof onProgress === "function") {
-                onProgress(transferred, expectedSize || transferred);
-              }
-            } else if (ev.type === "file-end") {
-              stream.write(buildAck());
-              if (typeof onProgress === "function") {
-                onProgress(transferred, expectedSize || transferred);
-              }
-              // For single-file download we're done after first file
-              finish(null);
-              try { stream.close?.(); } catch { /* ignore */ }
-              return;
-            } else if (ev.type === "directory") {
-              stream.write(buildAck());
-            } else if (ev.type === "end-directory") {
-              stream.write(buildAck());
-            } else if (ev.type === "time") {
-              stream.write(buildAck());
-            }
-          }
-        } catch (err) {
-          finish(err);
-        }
+        queue.push(Buffer.from(chunk));
+        // Pause the remote stream while we apply local backpressure.
+        try { stream.pause?.(); } catch { /* ignore */ }
+        void processQueue();
       });
       stream.on("error", (err) => {
         if (transfer?.cancelled) {

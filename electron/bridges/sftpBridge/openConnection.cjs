@@ -1070,6 +1070,8 @@ function createOpenConnectionApi(ctx) {
               return;
             }
 
+            // When the host asks for sudo SFTP, never silently fall through to
+            // unprivileged SCP on Auto — that would look "connected" without elevation.
             if (options.sudo) {
               console.log(`[SFTP] Using sudo mode for connection: ${connId}`);
               (async () => {
@@ -1088,17 +1090,12 @@ function createOpenConnectionApi(ctx) {
                     options.sudo = false; // Mark as non-sudo for downstream logic
                     sshClient.sftp((sftpErr, sftp) => {
                       if (sftpErr) {
-                        if (fileProtocol === "auto") {
-                          void finishScp(`SFTP subsystem failed after sudo fallback (${sftpErr.message})`);
-                          return;
-                        }
+                        // Do not drop to SCP after a sudo-mode open: elevation was requested.
                         sshClient.end();
                         return reject(sftpErr);
                       }
                       finishSftp(sftp);
                     });
-                  } else if (fileProtocol === "auto") {
-                    void finishScp(`SFTP sudo mode failed (${e.message})`);
                   } else {
                     sshClient.end();
                     reject(e);

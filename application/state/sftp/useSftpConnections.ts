@@ -225,6 +225,7 @@ export const useSftpConnections = ({
           host.protocol,
           host.sftpSudo,
           host.username,
+          host.sftpFileProtocol,
         );
       if (
         reconnectingRef.current[side]
