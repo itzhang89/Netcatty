@@ -52,9 +52,15 @@ const utf8ByteLength = (value: string): number =>
     ? Buffer.byteLength(value, 'utf8')
     : new TextEncoder().encode(value).length;
 
+/** Strict: intended body plus optional trailing whitespace only. */
+const remoteMatchesUploadedBody = (remoteText: string, body: string): boolean => {
+  if (!remoteText.startsWith(body)) return false;
+  return /^\s*$/.test(remoteText.slice(body.length));
+};
+
 /**
- * Prefer fixed-name temp PUT + MOVE; else padded in-place PUT with verify
- * so non-truncating / concurrent writers cannot leave invalid JSON (#2223).
+ * Prefer fixed-name temp PUT + MOVE (with pad + verify); else padded in-place
+ * PUT with strict body match so non-truncating servers cannot leave garbage.
  */
 const putWebdavFileReplacing = async (
   client: WebDAVClient,
@@ -74,32 +80,22 @@ const putWebdavFileReplacing = async (
     }
   };
 
-  try {
-    await client.putFileContents(tmpPath, body, { overwrite: true });
-    await client.moveFile(tmpPath, path, { overwrite: true });
-    return;
-  } catch {
-    await cleanupTemp();
-  }
-
-  let exists = false;
-  try {
-    exists = await client.exists(path);
-  } catch (error) {
-    throw new Error(
-      `WebDAV replace aborted: could not check existing file (${
-        error instanceof Error ? error.message : String(error)
-      })`,
-    );
-  }
-
-  let minLen = bodyLen;
-  if (exists) {
+  const readLen = async (target: string): Promise<number> => {
+    let exists = false;
     try {
-      const existing = await client.getFileContents(path, { format: 'text' });
-      if (existing != null) {
-        minLen = Math.max(minLen, utf8ByteLength(String(existing)));
-      }
+      exists = await client.exists(target);
+    } catch (error) {
+      throw new Error(
+        `WebDAV replace aborted: could not check existing file (${
+          error instanceof Error ? error.message : String(error)
+        })`,
+      );
+    }
+    if (!exists) return 0;
+    try {
+      const existing = await client.getFileContents(target, { format: 'text' });
+      if (existing == null) return 0;
+      return utf8ByteLength(String(existing));
     } catch (error) {
       throw new Error(
         `WebDAV replace aborted: could not read existing file length (${
@@ -107,17 +103,35 @@ const putWebdavFileReplacing = async (
         })`,
       );
     }
-  }
+  };
 
-  let lastVerifyError: unknown = null;
+  try {
+    let tmpMin = 0;
+    try {
+      tmpMin = await readLen(tmpPath);
+    } catch {
+      tmpMin = 0;
+    }
+    const tmpBody = tmpMin > bodyLen ? body + ' '.repeat(tmpMin - bodyLen) : body;
+    await client.putFileContents(tmpPath, tmpBody, { overwrite: true });
+    await client.moveFile(tmpPath, path, { overwrite: true });
+    const moved = String((await client.getFileContents(path, { format: 'text' })) ?? '');
+    if (remoteMatchesUploadedBody(moved, body)) {
+      return;
+    }
+  } catch {
+    // fall through
+  }
+  await cleanupTemp();
+
+  let minLen = await readLen(path);
+  minLen = Math.max(minLen, bodyLen);
   for (let attempt = 0; attempt < 3; attempt++) {
-    const payload =
-      minLen > bodyLen ? body + ' '.repeat(minLen - bodyLen) : body;
+    const payload = minLen > bodyLen ? body + ' '.repeat(minLen - bodyLen) : body;
     await client.putFileContents(path, payload, { overwrite: true });
     let remoteText = '';
     try {
-      const remote = await client.getFileContents(path, { format: 'text' });
-      remoteText = String(remote ?? '');
+      remoteText = String((await client.getFileContents(path, { format: 'text' })) ?? '');
     } catch (error) {
       throw new Error(
         `WebDAV upload verification failed: could not re-read file (${
@@ -125,22 +139,13 @@ const putWebdavFileReplacing = async (
         })`,
       );
     }
-    try {
-      parseSyncedFileJson(remoteText);
+    if (remoteMatchesUploadedBody(remoteText, body)) {
       return;
-    } catch (error) {
-      lastVerifyError = error;
-      minLen = Math.max(minLen, utf8ByteLength(remoteText), bodyLen);
     }
+    minLen = Math.max(minLen, utf8ByteLength(remoteText), bodyLen);
   }
-  const detail =
-    lastVerifyError instanceof Error
-      ? lastVerifyError.message
-      : String(lastVerifyError || '');
   throw new Error(
-    `WebDAV upload verification failed: remote file still not valid JSON after padded PUT${
-      detail ? ` (${detail})` : ''
-    }`,
+    'WebDAV upload verification failed: remote file still does not match uploaded body after padded PUT',
   );
 };
 

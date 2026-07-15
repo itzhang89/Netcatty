@@ -46,6 +46,17 @@ const padBodyToAtLeast = (bodyBuffer, minLength) => {
   return Buffer.concat([bodyBuffer, Buffer.alloc(minLength - bodyBuffer.length, 0x20)]);
 };
 
+/**
+ * Strict upload check: remote must be exactly the intended body, optionally
+ * followed only by whitespace. Do NOT use parseSyncedFileJson here — that
+ * helper intentionally recovers trailing garbage on download.
+ */
+const remoteMatchesUploadedBody = (remoteText, bodyBuffer) => {
+  const bodyText = bodyBuffer.toString("utf8");
+  if (!remoteText.startsWith(bodyText)) return false;
+  return /^\s*$/.test(remoteText.slice(bodyText.length));
+};
+
 const readExistingByteLengthStrict = async (client, path) => {
   let exists = false;
   try {
@@ -71,30 +82,46 @@ const readExistingByteLengthStrict = async (client, path) => {
   }
 };
 
+const readRemoteText = async (client, path) => {
+  const remote = await client.getFileContents(path, { format: "text" });
+  return String(remote ?? "");
+};
+
 const putWebdavFileReplacing = async (client, path, bodyBuffer) => {
   // Fixed temp name so failed cleanups cannot accumulate one full vault per sync.
   const tmpPath = `${path}.tmp`;
 
-  // Optional atomic path: temp file then MOVE into place.
+  // Optional atomic path: pad temp (in case a stale non-truncated .tmp remains),
+  // MOVE into place, then strictly verify the destination.
   try {
-    await client.putFileContents(tmpPath, bodyBuffer, { overwrite: true });
+    let tmpMinLen = 0;
+    try {
+      tmpMinLen = await readExistingByteLengthStrict(client, tmpPath);
+    } catch {
+      tmpMinLen = 0;
+    }
+    await client.putFileContents(tmpPath, padBodyToAtLeast(bodyBuffer, tmpMinLen), {
+      overwrite: true,
+    });
     await client.moveFile(tmpPath, path, { overwrite: true });
-    return;
+    const movedText = await readRemoteText(client, path);
+    if (remoteMatchesUploadedBody(movedText, bodyBuffer)) {
+      return;
+    }
   } catch {
-    await safeDeleteWebdavPath(client, tmpPath);
+    // fall through to padded in-place PUT
   }
+  await safeDeleteWebdavPath(client, tmpPath);
 
-  // Keep the canonical path visible. Pad + verify so non-truncating servers
-  // and concurrent writers that grow the remote cannot leave invalid JSON.
+  // Keep the canonical path visible. Pad + strict verify so non-truncating
+  // servers and concurrent writers that grow the remote cannot leave garbage.
   let minLen = await readExistingByteLengthStrict(client, path);
-  let lastVerifyError = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     const payload = padBodyToAtLeast(bodyBuffer, minLen);
     await client.putFileContents(path, payload, { overwrite: true });
     let remoteText = "";
     try {
-      const remote = await client.getFileContents(path, { format: "text" });
-      remoteText = String(remote ?? "");
+      remoteText = await readRemoteText(client, path);
     } catch (error) {
       throw new Error(
         `WebDAV upload verification failed: could not re-read file (${
@@ -102,20 +129,13 @@ const putWebdavFileReplacing = async (client, path, bodyBuffer) => {
         })`
       );
     }
-    try {
-      parseSyncedFileJson(remoteText);
+    if (remoteMatchesUploadedBody(remoteText, bodyBuffer)) {
       return;
-    } catch (error) {
-      lastVerifyError = error;
-      minLen = Math.max(minLen, Buffer.byteLength(remoteText, "utf8"), bodyBuffer.length);
     }
+    minLen = Math.max(minLen, Buffer.byteLength(remoteText, "utf8"), bodyBuffer.length);
   }
-  const detail =
-    lastVerifyError instanceof Error ? lastVerifyError.message : String(lastVerifyError || "");
   throw new Error(
-    `WebDAV upload verification failed: remote file still not valid JSON after padded PUT${
-      detail ? ` (${detail})` : ""
-    }`
+    "WebDAV upload verification failed: remote file still does not match uploaded body after padded PUT"
   );
 };
 
