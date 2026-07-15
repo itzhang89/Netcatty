@@ -153,6 +153,19 @@ describe("scpShell quoting and commands", () => {
     assert.equal(rows[1].name, "sub");
   });
 
+  it("parses list records with gb18030 basenames", () => {
+    const iconv = require("iconv-lite");
+    const name = "测试.txt";
+    const b64 = iconv.encode(name, "gb18030").toString("base64");
+    const rows = parseListRecords(`f|-rw-r--r--|1|1700000000|${b64}\n`, "gb18030");
+    assert.equal(rows[0]?.name, name);
+  });
+
+  it("list command keeps broken symlinks", () => {
+    assert.match(buildListCommand("/tmp"), /-L "\$f"/);
+    assert.match(buildListCommand("/tmp"), /-e "\$f"/);
+  });
+
   it("normalizes file protocol preference", () => {
     assert.equal(normalizeFileProtocol(undefined), "auto");
     assert.equal(normalizeFileProtocol("SFTP"), "sftp");

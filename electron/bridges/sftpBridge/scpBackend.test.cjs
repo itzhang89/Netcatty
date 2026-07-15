@@ -306,4 +306,25 @@ describe("scpBackend upload/download with fake scp streams", () => {
     assert.equal(transfer.cancelled, true);
     assert.equal(createTransferFromAbortSignal(null), null);
   });
+
+  it("list aborts when AbortSignal fires during shell exec", async () => {
+    const controller = new AbortController();
+    const backend = createScpBackend({
+      exec: (_command, options = {}) => new Promise((resolve, reject) => {
+        const signal = options.signal;
+        if (signal?.aborted) {
+          reject(new Error("Transfer cancelled"));
+          return;
+        }
+        const onAbort = () => reject(new Error("Transfer cancelled"));
+        signal?.addEventListener("abort", onAbort, { once: true });
+        // Never resolve until aborted (simulates hung remote).
+      }),
+      execStream: async () => createMockStream(),
+    });
+    const listPromise = backend.list("/tmp", { signal: controller.signal });
+    await new Promise((r) => setTimeout(r, 20));
+    controller.abort();
+    await assert.rejects(() => listPromise, /cancel/i);
+  });
 });

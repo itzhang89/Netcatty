@@ -13,7 +13,11 @@ function createFileOpsApi(ctx) {
       if (isScpModeClient(client)) {
         const backend = getScpBackendForClient(client);
         const basePath = payload.path || ".";
-        return await backend.list(basePath);
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        return await backend.list(basePath, {
+          encoding,
+          signal: payload?.abortSignal || null,
+        });
       }
     
       const requestedEncoding = normalizeEncoding(payload.encoding);
@@ -548,7 +552,10 @@ function createFileOpsApi(ctx) {
     async function mkdirSftp(event, payload) {
       const client = sftpClients.get(payload.sftpId);
       if (client && isScpModeClient(client)) {
-        await getScpBackendForClient(client).mkdir(payload.path, { recursive: true });
+        await getScpBackendForClient(client).mkdir(payload.path, {
+          recursive: true,
+          signal: payload?.abortSignal || null,
+        });
         return true;
       }
       await ensureRemoteDirForSession(payload.sftpId, payload.path, payload.encoding);
@@ -594,7 +601,10 @@ function createFileOpsApi(ctx) {
 
       if (isScpModeClient(client)) {
         throwIfAborted(payload?.abortSignal || null);
-        await getScpBackendForClient(client).remove(payload.path, { recursive: true });
+        await getScpBackendForClient(client).remove(payload.path, {
+          recursive: true,
+          signal: payload?.abortSignal || null,
+        });
         return true;
       }
     
@@ -679,7 +689,9 @@ function createFileOpsApi(ctx) {
       if (!client) throw new Error("SFTP session not found");
 
       if (isScpModeClient(client)) {
-        await getScpBackendForClient(client).rename(payload.oldPath, payload.newPath);
+        await getScpBackendForClient(client).rename(payload.oldPath, payload.newPath, {
+          signal: payload?.abortSignal || null,
+        });
         return true;
       }
     
@@ -699,7 +711,9 @@ function createFileOpsApi(ctx) {
       if (!client) throw new Error("SFTP session not found");
 
       if (isScpModeClient(client)) {
-        const st = await getScpBackendForClient(client).stat(payload.path);
+        const st = await getScpBackendForClient(client).stat(payload.path, {
+          signal: payload?.abortSignal || null,
+        });
         return {
           name: path.basename(payload.path),
           type: st.isDirectory ? "directory" : st.isSymbolicLink ? "symlink" : "file",
@@ -730,7 +744,9 @@ function createFileOpsApi(ctx) {
       if (!client) throw new Error("SFTP session not found");
 
       if (isScpModeClient(client)) {
-        await getScpBackendForClient(client).chmod(payload.path, payload.mode);
+        await getScpBackendForClient(client).chmod(payload.path, payload.mode, {
+          signal: payload?.abortSignal || null,
+        });
         return true;
       }
     

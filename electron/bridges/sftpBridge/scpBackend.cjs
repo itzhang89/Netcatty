@@ -37,6 +37,7 @@ const {
   parseStatRecord,
   modeToPermissionsString,
   isScpModeClient,
+  shellQuotePath,
   ScpShellError,
 } = require("./scpShell.cjs");
 
@@ -89,8 +90,11 @@ function createScpBackend(deps = {}) {
     throw new Error("scpBackend requires deps.execStream(command)");
   }
 
-  async function runOrThrow(command, { allowNonZero = false } = {}) {
-    const result = await exec(command);
+  async function runOrThrow(command, { allowNonZero = false, signal = null } = {}) {
+    if (signal?.aborted) {
+      throw new Error("Transfer cancelled");
+    }
+    const result = await exec(command, { signal });
     if (!allowNonZero && result.code !== 0 && result.code != null) {
       const detail = (result.stderr || result.stdout || "").trim() || `exit ${result.code}`;
       throw new ScpShellError(detail);
@@ -98,23 +102,26 @@ function createScpBackend(deps = {}) {
     return result;
   }
 
-  async function list(remotePath) {
+  async function list(remotePath, options = {}) {
     const dir = remotePath || ".";
+    const encoding = options.encoding || "utf-8";
+    const signal = options.signal || null;
     assertSafeRemotePath(dir === "." ? "." : dir);
     let records;
     try {
-      const result = await runOrThrow(buildListCommand(dir), { allowNonZero: true });
+      const result = await runOrThrow(buildListCommand(dir), { allowNonZero: true, signal });
       if (result.code === 0) {
-        records = parseListRecords(result.stdout);
+        records = parseListRecords(result.stdout, encoding);
         if (records.length === 0 && (result.stdout || "").trim()) {
           records = null;
         }
       }
-    } catch {
+    } catch (err) {
+      if (signal?.aborted || /cancel/i.test(err?.message || "")) throw err;
       records = null;
     }
     if (!records) {
-      const ls = await runOrThrow(buildListCommandLs(dir));
+      const ls = await runOrThrow(buildListCommandLs(dir), { signal });
       records = parseLsLaOutput(ls.stdout, { basePath: dir });
     }
     // Resolve symlink targets so UI can navigate directory links
@@ -122,6 +129,7 @@ function createScpBackend(deps = {}) {
     const base = dir === "." ? "." : dir.replace(/\/+$/, "") || "/";
     const entries = [];
     for (const rec of records) {
+      if (signal?.aborted) throw new Error("Transfer cancelled");
       const entry = toListEntry(rec);
       if (rec.type === "symlink") {
         const fullPath = base === "/"
@@ -129,7 +137,7 @@ function createScpBackend(deps = {}) {
           : base === "."
             ? rec.name
             : `${base}/${rec.name}`;
-        entry.linkTarget = await resolveSymlinkTargetType(fullPath);
+        entry.linkTarget = await resolveSymlinkTargetType(fullPath, { encoding, signal });
       }
       entries.push(entry);
     }
@@ -140,16 +148,17 @@ function createScpBackend(deps = {}) {
    * Follow a symlink with shell tests (same idea as SFTP client.stat following links).
    * `[ -d path ]` follows symlinks; combined with known-symlink listing.
    */
-  async function resolveSymlinkTargetType(remotePath) {
+  async function resolveSymlinkTargetType(remotePath, options = {}) {
     try {
-      assertSafeRemotePath(remotePath);
+      const encoding = options.encoding || "utf-8";
+      const signal = options.signal || null;
       // -e fails for broken links; -d follows to the target.
       const cmd = [
-        `p=${shellQuote(remotePath)}`,
+        `p=${shellQuotePath(remotePath, encoding)}`,
         'if [ ! -e "$p" ] && [ ! -L "$p" ]; then echo broken; exit 0; fi',
         'if [ -d "$p" ]; then echo directory; else echo file; fi',
       ].join("; ");
-      const result = await runOrThrow(cmd, { allowNonZero: true });
+      const result = await runOrThrow(cmd, { allowNonZero: true, signal });
       const kind = (result.stdout || "").trim().split(/\r?\n/).pop();
       if (kind === "directory") return "directory";
       if (kind === "file") return "file";
@@ -174,55 +183,62 @@ function createScpBackend(deps = {}) {
     };
   }
 
-  async function stat(remotePath) {
-    const result = await runOrThrow(buildStatCommand(remotePath));
+  async function stat(remotePath, options = {}) {
+    const signal = options.signal || null;
+    const result = await runOrThrow(buildStatCommand(remotePath), { signal });
     return parseStatRecord(result.stdout);
   }
 
   async function mkdir(remotePath, options = {}) {
-    await runOrThrow(buildMkdirCommand(remotePath, { recursive: options.recursive !== false }));
+    const signal = options.signal || null;
+    await runOrThrow(buildMkdirCommand(remotePath, { recursive: options.recursive !== false }), { signal });
     return true;
   }
 
   async function remove(remotePath, options = {}) {
+    const signal = options.signal || null;
     let recursive = !!options.recursive;
     if (!recursive) {
       try {
-        const st = await stat(remotePath);
+        const st = await stat(remotePath, { signal });
         recursive = st.isDirectory;
       } catch {
         // best-effort delete
       }
     }
-    await runOrThrow(buildDeleteCommand(remotePath, { recursive }));
+    await runOrThrow(buildDeleteCommand(remotePath, { recursive }), { signal });
     return true;
   }
 
-  async function rename(oldPath, newPath) {
-    await runOrThrow(buildRenameCommand(oldPath, newPath));
+  async function rename(oldPath, newPath, options = {}) {
+    const signal = options.signal || null;
+    await runOrThrow(buildRenameCommand(oldPath, newPath), { signal });
     return true;
   }
 
-  async function chmod(remotePath, mode) {
+  async function chmod(remotePath, mode, options = {}) {
+    const signal = options.signal || null;
     let modeStr;
     if (typeof mode === "number") {
       modeStr = (mode & 0o7777).toString(8);
     } else {
       modeStr = String(mode);
     }
-    await runOrThrow(buildChmodCommand(remotePath, modeStr));
+    await runOrThrow(buildChmodCommand(remotePath, modeStr), { signal });
     return true;
   }
 
-  async function homeDir() {
-    const result = await runOrThrow(buildHomeCommand());
+  async function homeDir(options = {}) {
+    const signal = options.signal || null;
+    const result = await runOrThrow(buildHomeCommand(), { signal });
     const home = (result.stdout || "").trim();
     if (home) return home;
     throw new ScpShellError("Could not determine home directory");
   }
 
-  async function realpath(remotePath) {
-    const result = await runOrThrow(buildRealpathCommand(remotePath || "."));
+  async function realpath(remotePath, options = {}) {
+    const signal = options.signal || null;
+    const result = await runOrThrow(buildRealpathCommand(remotePath || "."), { signal });
     const abs = (result.stdout || "").trim().split(/\r?\n/)[0];
     if (!abs) throw new ScpShellError("Could not resolve remote path");
     return abs;
@@ -714,24 +730,73 @@ function createScpBackend(deps = {}) {
  * Build exec/execStream adapters from an ssh2 Client.
  */
 function createSshExecAdapters(sshClient) {
-  function exec(command) {
+  function exec(command, options = {}) {
+    const signal = options.signal || null;
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new Error("Transfer cancelled"));
+        return;
+      }
+      let settled = false;
+      let streamRef = null;
+      const cleanup = () => {
+        if (signal) {
+          try { signal.removeEventListener("abort", onAbort); } catch { /* ignore */ }
+        }
+      };
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        fn(value);
+      };
+      const onAbort = () => {
+        try { streamRef?.close?.(); } catch { /* ignore */ }
+        try { streamRef?.destroy?.(); } catch { /* ignore */ }
+        finish(reject, new Error("Transfer cancelled"));
+      };
+      if (signal) {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
       sshClient.exec(command, (err, stream) => {
-        if (err) return reject(err);
+        if (err) {
+          finish(reject, err);
+          return;
+        }
+        if (settled) {
+          try { stream.close?.(); } catch { /* ignore */ }
+          return;
+        }
+        streamRef = stream;
         let stdout = "";
         let stderr = "";
         stream.on("data", (d) => { stdout += d.toString(); });
         stream.stderr?.on("data", (d) => { stderr += d.toString(); });
-        stream.on("close", (code) => resolve({ stdout, stderr, code }));
-        stream.on("error", reject);
+        stream.on("close", (code) => finish(resolve, { stdout, stderr, code }));
+        stream.on("error", (streamErr) => finish(reject, streamErr));
       });
     });
   }
 
-  function execStream(command) {
+  function execStream(command, options = {}) {
+    const signal = options.signal || null;
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new Error("Transfer cancelled"));
+        return;
+      }
       sshClient.exec(command, (err, stream) => {
         if (err) return reject(err);
+        if (signal) {
+          const onAbort = () => {
+            try { stream.close?.(); } catch { /* ignore */ }
+            try { stream.destroy?.(); } catch { /* ignore */ }
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+          stream.on("close", () => {
+            try { signal.removeEventListener("abort", onAbort); } catch { /* ignore */ }
+          });
+        }
         resolve(stream);
       });
     });

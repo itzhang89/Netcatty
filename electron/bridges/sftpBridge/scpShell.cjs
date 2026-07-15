@@ -78,8 +78,8 @@ function buildListCommand(remotePath) {
   // after `do` is a syntax error on POSIX sh and would force the ls -la fallback).
   const loop = [
     "for f in * .[!.]* ..?*; do",
-    // shell can expand * to literal * when empty — we guard with [ -e ]
-    '  [ -e "$f" ] || continue',
+    // Include broken symlinks: -e is false for dangling links, but -L is true.
+    '  { [ -e "$f" ] || [ -L "$f" ]; } || continue',
     '  [ "$f" = "." ] && continue',
     '  [ "$f" = ".." ] && continue',
     '  if [ -L "$f" ]; then t=l',
@@ -172,10 +172,48 @@ function buildRealpathCommand(remotePath) {
 }
 
 /**
+ * Decode a base64-encoded remote basename using the session filename encoding.
+ * @param {string} b64
+ * @param {string} [encoding] utf-8 | gb18030 | auto
+ */
+function decodeListBasename(b64, encoding = "utf-8") {
+  const raw = Buffer.from(b64, "base64");
+  const enc = String(encoding || "utf-8").toLowerCase();
+  if (enc === "gb18030" || enc === "gbk" || enc === "gb2312") {
+    try {
+      // eslint-disable-next-line global-require
+      const iconv = require("iconv-lite");
+      return iconv.decode(raw, "gb18030");
+    } catch {
+      return raw.toString("utf8");
+    }
+  }
+  return raw.toString("utf8");
+}
+
+/**
+ * Quote a remote path for shell, encoding non-UTF-8 path bytes when needed.
+ * For gb18030 hosts the remote filesystem expects gb18030 bytes, not UTF-8.
+ */
+function shellQuotePath(remotePath, encoding = "utf-8") {
+  assertSafeRemotePath(remotePath);
+  const enc = String(encoding || "utf-8").toLowerCase();
+  if (enc === "gb18030" || enc === "gbk" || enc === "gb2312") {
+    // eslint-disable-next-line global-require
+    const iconv = require("iconv-lite");
+    const b64 = iconv.encode(remotePath, "gb18030").toString("base64");
+    // Expand base64 to raw bytes on the remote, then single-quote via printf %q if available
+    // or wrap in double quotes after base64 -d into a variable.
+    return `"$(printf '%s' '${b64}' | base64 -d 2>/dev/null || printf '%s' '${b64}' | base64 -D 2>/dev/null)"`;
+  }
+  return shellQuote(remotePath);
+}
+
+/**
  * Parse records from buildListCommand output.
  * @returns {Array<{ name: string, type: 'file'|'directory'|'symlink', size: number, modifyTime: number, permissions?: string }>}
  */
-function parseListRecords(stdout) {
+function parseListRecords(stdout, encoding = "utf-8") {
   const lines = String(stdout || "").split(/\r?\n/).filter(Boolean);
   const results = [];
   for (const line of lines) {
@@ -184,7 +222,7 @@ function parseListRecords(stdout) {
     const [t, modeStr, sizeStr, mtimeStr, b64] = parts;
     let name;
     try {
-      name = Buffer.from(b64, "base64").toString("utf8");
+      name = decodeListBasename(b64, encoding);
     } catch {
       continue;
     }
@@ -339,6 +377,8 @@ module.exports = {
   parseLsModeToPermissions,
   lsModeToNumber,
   modeToPermissionsString,
+  decodeListBasename,
+  shellQuotePath,
   normalizeFileProtocol,
   isScpModeClient,
 };
