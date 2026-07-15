@@ -31,7 +31,7 @@ export const validatePortForwardingHost = (
   if (!hostId || !host) {
     return { ok: false, error: `Host "${hostId || ''}" was not found.` };
   }
-  if (host.protocol === 'serial') {
+  if (host.protocol && host.protocol !== 'ssh') {
     return { ok: false, error: `Host "${hostId}" does not support port forwarding.` };
   }
   return { ok: true, value: host };

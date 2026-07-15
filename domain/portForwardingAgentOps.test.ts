@@ -22,12 +22,14 @@ describe('portForwardingAgentOps', () => {
     assert.equal(createPortForwardingRule([], [host], { ...source, localPort: 0 }, { id: 'x', now: 1 }).ok, false);
     assert.equal(createPortForwardingRule([], [host], { ...source, hostId: 'missing' }, { id: 'x', now: 1 }).ok, false);
     assert.equal(createPortForwardingRule([], [host], { ...source, type: 'invalid' }, { id: 'x', now: 1 }).ok, false);
-    const serialHost: Host = { ...host, id: 'serial-host', protocol: 'serial' };
-    const serialResult = createPortForwardingRule([], [serialHost], {
-      ...source, hostId: serialHost.id,
-    }, { id: 'serial-rule', now: 1 });
-    assert.equal(serialResult.ok, false);
-    if (!serialResult.ok) assert.match(serialResult.error, /does not support port forwarding/i);
+    for (const protocol of ['telnet', 'local', 'serial'] as const) {
+      const unsupportedHost: Host = { ...host, id: `${protocol}-host`, protocol };
+      const unsupportedResult = createPortForwardingRule([], [unsupportedHost], {
+        ...source, hostId: unsupportedHost.id,
+      }, { id: `${protocol}-rule`, now: 1 });
+      assert.equal(unsupportedResult.ok, false);
+      if (!unsupportedResult.ok) assert.match(unsupportedResult.error, /does not support port forwarding/i);
+    }
     const dynamic = createPortForwardingRule([], [host], {
       type: 'dynamic', localPort: 1080, hostId: 'host-1',
     }, { id: 'dynamic-1', now: 1 });
