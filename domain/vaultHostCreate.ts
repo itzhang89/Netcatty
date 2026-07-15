@@ -290,7 +290,7 @@ export function applyVaultHostUpdate(
       updated.identityFileId = undefined;
       updated.identityFilePaths = undefined;
       updated.useSshAgent = false;
-    } else if (password.value && effectiveCurrent.identityId) {
+    } else if (effectiveCurrent.identityId) {
       const selectedIdentity = options.identities?.find(
         (identity) => identity.id === effectiveCurrent.identityId,
       );

@@ -353,6 +353,42 @@ test('applyVaultHostUpdate detaches a password identity so the new password take
   assert.equal(result.updatedHost.authMethod, 'password');
 });
 
+test('applyVaultHostUpdate detaches a password identity when clearing the password', () => {
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: '10.0.0.1',
+    username: 'root',
+    tags: [],
+    os: 'linux',
+    identityId: 'identity-1',
+  };
+  const identity: Identity = {
+    id: 'identity-1',
+    label: 'shared password',
+    username: 'deploy',
+    authMethod: 'password',
+    password: 'old-secret',
+    created: 1,
+  };
+
+  const result = applyVaultHostUpdate(
+    [existing],
+    [],
+    existing.id,
+    { password: '' },
+    { identities: [identity] },
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.updatedHost.password, undefined);
+  assert.equal(result.updatedHost.savePassword, false);
+  assert.equal(result.updatedHost.username, 'deploy');
+  assert.equal(result.updatedHost.identityId, '');
+  assert.equal(result.updatedHost.authMethod, 'password');
+});
+
 test('applyVaultHostUpdate can re-enable saved passwords after clearing one', () => {
   const existing: Host = {
     id: 'host-1',
