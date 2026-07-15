@@ -811,7 +811,13 @@ async function openSftpForSession(_event, payload) {
   });
   const { normalizeFileProtocol } = require("./sftpBridge/scpShell.cjs");
   const { getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
-  const fileProtocol = normalizeFileProtocol(payload?.fileProtocol);
+  // Prefer explicit payload, then the host preference stored when the SSH
+  // session started (Catty/MCP/clipboard open without fileProtocol).
+  const fileProtocol = normalizeFileProtocol(
+    payload?.fileProtocol
+      ?? session?.sftpFileProtocol
+      ?? session?.fileProtocol,
+  );
   try {
     if (fileProtocol === "scp") {
       client.__netcattyFileProtocol = "scp";

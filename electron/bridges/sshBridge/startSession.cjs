@@ -136,6 +136,9 @@ function createStartSessionApi(ctx) {
         hostname: options.host || options.hostname || '',
         username: options.username || '',
         label: options.label || '',
+        // Host file-transfer preference for session-backed SFTP/SCP opens
+        // (Catty/MCP/clipboard paste call openSftpForSession without protocol).
+        sftpFileProtocol: options.sftpFileProtocol || options.fileProtocol || 'auto',
         systemManagerSudoPassword: typeof options.sudoAutofillPassword === 'string' && options.sudoAutofillPassword.length > 0
           ? options.sudoAutofillPassword
           : undefined,

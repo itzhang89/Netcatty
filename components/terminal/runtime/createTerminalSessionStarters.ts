@@ -537,6 +537,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           cols: term.cols,
           rows: term.rows,
           charset: ctx.host.charset,
+          // Persist for session-backed SFTP opens (AI tools / clipboard paste).
+          sftpFileProtocol: ctx.host.sftpFileProtocol || "auto",
           env: termEnv,
           proxy: proxyConfig,
           jumpHosts: jumpHosts.length > 0 ? jumpHosts : undefined,

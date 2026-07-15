@@ -415,8 +415,10 @@ function createScpBackend(deps = {}) {
       // race past waitForAck and hang the upload. Race it with the stream so a
       // mid-stream remote error/cancel does not leave an unhandled rejection.
       const finalAck = waitForAck(stream, transfer);
+      let activeReadStream = null;
       const streamDone = new Promise((resolve, reject) => {
         const readStream = fsModule.createReadStream(localPath, { highWaterMark: 256 * 1024 });
+        activeReadStream = readStream;
         if (transfer) transfer.readStream = readStream;
 
         let settled = false;
@@ -458,9 +460,11 @@ function createScpBackend(deps = {}) {
       try {
         await Promise.all([streamDone, finalAck]);
       } catch (err) {
-        // Whichever side loses first must not leave the other as unhandled rejection.
+        // Whichever side loses first must not leave the other as unhandled rejection,
+        // and must stop the local reader (including a drain-paused stream).
         void streamDone.catch(() => {});
         void finalAck.catch(() => {});
+        try { activeReadStream?.destroy(); } catch { /* ignore */ }
         throw err;
       }
       await closeStream(stream);
@@ -469,6 +473,7 @@ function createScpBackend(deps = {}) {
       return true;
     } catch (err) {
       abort();
+      try { transfer?.readStream?.destroy(); } catch { /* ignore */ }
       throw err;
     }
   }
