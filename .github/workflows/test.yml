@@ -82,4 +82,5 @@ jobs:
           NETCATTY_TEST_MOSH_SSH_EXE: ${{ runner.temp }}\netcatty-mosh-conpty\ssh.exe
           NETCATTY_TEST_MOSH_CLIENT_EXE: ${{ runner.temp }}\netcatty-mosh-conpty\mosh-client.exe
         run: |
-          node --test electron/bridges/moshHandshake.test.cjs electron/bridges/terminalBridge.moshConpty.integration.test.cjs
+          node --test electron/bridges/moshHandshake.test.cjs
+          node electron/bridges/terminalBridge.moshConpty.integration.cjs
