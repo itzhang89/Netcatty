@@ -2,6 +2,7 @@ import type { Host, HostProtocol, Identity, ManagedSource } from './models';
 import { sanitizeHost } from './host';
 
 const DEFAULT_SSH_PORT = 22;
+const DEFAULT_TELNET_PORT = 23;
 const UNSAFE_SSH_CONFIG_VALUE = /[\r\n\0]/;
 const UNSAFE_SSH_JUMP_HOSTNAME = /[\s,@#]/;
 const UNSAFE_SSH_JUMP_USERNAME = /[\s,#]/;
@@ -66,16 +67,18 @@ const normalizeProtocol = (raw: unknown): VaultHostDraftProtocol | undefined => 
 };
 
 const parsePort = (raw: unknown): number | undefined => {
-  if (typeof raw === 'number' && Number.isFinite(raw)) {
-    const port = Math.trunc(raw);
-    return port >= 1 && port <= 65535 ? port : undefined;
+  if (typeof raw === 'number') {
+    return Number.isInteger(raw) && raw >= 1 && raw <= 65535 ? raw : undefined;
   }
   if (typeof raw !== 'string') return undefined;
   const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  const port = parseInt(trimmed, 10);
-  return Number.isFinite(port) && port >= 1 && port <= 65535 ? port : undefined;
+  if (!/^\d+$/u.test(trimmed)) return undefined;
+  const port = Number(trimmed);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : undefined;
 };
+
+const defaultPortForProtocol = (protocol: HostProtocol | undefined): number =>
+  protocol === 'telnet' ? DEFAULT_TELNET_PORT : DEFAULT_SSH_PORT;
 
 const parseBoolean = (raw: unknown): boolean | undefined => {
   if (typeof raw === 'boolean') return raw;
@@ -154,8 +157,22 @@ export function buildVaultHostFromDraft(
     return { ok: false, error: 'hostname must not contain line breaks or null bytes.' };
   }
 
-  const protocol = normalizeProtocol(draft.protocol) ?? 'ssh';
-  const port = parsePort(draft.port) ?? (protocol === 'telnet' ? 23 : DEFAULT_SSH_PORT);
+  const parsedProtocol = normalizeProtocol(draft.protocol);
+  const hasProtocolInput = draft.protocol !== undefined
+    && draft.protocol !== null
+    && !(typeof draft.protocol === 'string' && !draft.protocol.trim());
+  if (hasProtocolInput && parsedProtocol === undefined) {
+    return { ok: false, error: 'protocol must be ssh, telnet, or local.' };
+  }
+  const protocol = parsedProtocol ?? 'ssh';
+  const parsedPort = parsePort(draft.port);
+  const hasPortInput = draft.port !== undefined
+    && draft.port !== null
+    && !(typeof draft.port === 'string' && !draft.port.trim());
+  if (hasPortInput && parsedPort === undefined) {
+    return { ok: false, error: 'port must be an integer between 1 and 65535.' };
+  }
+  const port = parsedPort ?? defaultPortForProtocol(protocol);
   const rawLabel = draft.label ?? draft.name;
   const label = typeof rawLabel === 'string' && rawLabel.trim()
     ? rawLabel.trim()
@@ -269,7 +286,7 @@ export function applyVaultHostUpdate(
   if (port.provided) {
     const parsedPort = parsePort(port.value);
     if (parsedPort === undefined) {
-      return { ok: false, error: 'port must be between 1 and 65535.' };
+      return { ok: false, error: 'port must be an integer between 1 and 65535.' };
     }
     updated.port = parsedPort;
   }
@@ -283,6 +300,12 @@ export function applyVaultHostUpdate(
     const nextProtocol = normalizeProtocol(protocol.value);
     if (!nextProtocol) {
       return { ok: false, error: 'protocol must be ssh, telnet, or local.' };
+    }
+    if (
+      !port.provided
+      && (current.port === undefined || current.port === defaultPortForProtocol(current.protocol))
+    ) {
+      updated.port = defaultPortForProtocol(nextProtocol);
     }
     updated.protocol = nextProtocol;
   }

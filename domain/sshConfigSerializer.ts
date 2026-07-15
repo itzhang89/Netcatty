@@ -7,7 +7,7 @@ const MANAGED_BLOCK_END = "# END NETCATTY MANAGED";
 const UNSAFE_SSH_CONFIG_VALUE = /[\r\n\0]/;
 const UNSAFE_SSH_PROXY_JUMP_HOSTNAME = /[\s,@#]/;
 const UNSAFE_SSH_PROXY_JUMP_USERNAME = /[\s,#]/;
-const UNSAFE_SSH_HOST_ALIAS = /[*?!,[\]@#]/;
+const UNSAFE_SSH_HOST_ALIAS = /["\\*?!,[\]@#]/;
 const UNSAFE_SSH_HOST_MATCH_LITERAL = /[\s*?!,[\]@#]/;
 const ENCODED_HOST_ALIAS_PREFIX = "netcatty-encoded-";
 
@@ -162,7 +162,7 @@ export const serializeHostsToSshConfig = (hosts: Host[], allHosts?: Host[]): str
     lines.push(`Host ${alias}`);
 
     if (host.hostname !== alias) {
-      lines.push(`    HostName ${host.hostname}`);
+      lines.push(`    HostName ${formatSshConfigArgument(host.hostname)}`);
     }
 
     if (host.username) {
@@ -181,9 +181,7 @@ export const serializeHostsToSshConfig = (hosts: Host[], allHosts?: Host[]): str
     if (host.identityFilePaths && host.identityFilePaths.length > 0) {
       for (const keyPath of host.identityFilePaths) {
         assertSafeSshConfigValue(keyPath, "IdentityFile path");
-        // Quote paths that contain spaces
-        const formatted = keyPath.includes(" ") ? `"${keyPath}"` : keyPath;
-        lines.push(`    IdentityFile ${formatted}`);
+        lines.push(`    IdentityFile ${formatSshConfigArgument(keyPath)}`);
       }
     }
 
@@ -206,8 +204,7 @@ export const serializeHostsToSshConfig = (hosts: Host[], allHosts?: Host[]): str
 
     if (serializedIdentityAgent !== undefined) {
       assertSafeSshConfigValue(serializedIdentityAgent, "IdentityAgent");
-      const formatted = serializedIdentityAgent.includes(" ") ? `"${serializedIdentityAgent}"` : serializedIdentityAgent;
-      lines.push(`    IdentityAgent ${formatted}`);
+      lines.push(`    IdentityAgent ${formatSshConfigArgument(serializedIdentityAgent)}`);
     }
 
     if (host.identitiesOnly !== undefined) {

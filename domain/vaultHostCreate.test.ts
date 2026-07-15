@@ -71,6 +71,24 @@ test('buildVaultHostFromDraft rejects an invalid password-saving option', () => 
   assert.match(built.error, /true or false/i);
 });
 
+test('buildVaultHostFromDraft rejects non-integer ports instead of changing them', () => {
+  for (const port of [22.9, '22.9', '22oops']) {
+    const built = buildVaultHostFromDraft({ hostname: '10.0.0.20', port });
+
+    assert.equal(built.ok, false);
+    if (built.ok) continue;
+    assert.match(built.error, /integer between 1 and 65535/i);
+  }
+});
+
+test('buildVaultHostFromDraft rejects an unsupported protocol instead of using SSH', () => {
+  const built = buildVaultHostFromDraft({ hostname: '10.0.0.20', protocol: 'ftp' });
+
+  assert.equal(built.ok, false);
+  if (built.ok) return;
+  assert.match(built.error, /ssh, telnet, or local/i);
+});
+
 test('buildVaultHostFromDraft rejects SSH config line injection', () => {
   for (const draft of [
     { hostname: 'host.example.com', username: 'root\nProxyCommand /tmp/run' },
@@ -159,6 +177,62 @@ test('applyVaultHostUpdate changes only provided fields and adds a new group', (
   assert.deepEqual(result.updatedHost.tags, ['keep']);
   assert.equal(result.updatedHost.notes, undefined);
   assert.ok(result.customGroups.includes('prod/api'));
+});
+
+test('applyVaultHostUpdate rejects non-integer ports instead of changing them', () => {
+  const existing: Host = {
+    id: 'host-1',
+    label: 'host',
+    hostname: '10.0.0.1',
+    username: 'root',
+    port: 22,
+    tags: [],
+    os: 'linux',
+  };
+
+  for (const port of [22.9, '22.9', '22oops']) {
+    const result = applyVaultHostUpdate([existing], [], existing.id, { port });
+
+    assert.equal(result.ok, false);
+    if (result.ok) continue;
+    assert.match(result.error, /integer between 1 and 65535/i);
+  }
+});
+
+test('applyVaultHostUpdate changes default ports when switching protocols', () => {
+  const ssh: Host = {
+    id: 'ssh',
+    label: 'ssh',
+    hostname: 'ssh.example.com',
+    username: 'root',
+    port: 22,
+    protocol: 'ssh',
+    tags: [],
+    os: 'linux',
+  };
+  const telnet: Host = {
+    ...ssh,
+    id: 'telnet',
+    label: 'telnet',
+    port: 23,
+    protocol: 'telnet',
+  };
+  const custom: Host = { ...ssh, id: 'custom', label: 'custom', port: 2222 };
+
+  const toTelnet = applyVaultHostUpdate([ssh], [], ssh.id, { protocol: 'telnet' });
+  const toSsh = applyVaultHostUpdate([telnet], [], telnet.id, { protocol: 'ssh' });
+  const keepCustom = applyVaultHostUpdate([custom], [], custom.id, { protocol: 'telnet' });
+  const explicitPort = applyVaultHostUpdate([ssh], [], ssh.id, { protocol: 'telnet', port: 2323 });
+
+  assert.equal(toTelnet.ok, true);
+  assert.equal(toSsh.ok, true);
+  assert.equal(keepCustom.ok, true);
+  assert.equal(explicitPort.ok, true);
+  if (!toTelnet.ok || !toSsh.ok || !keepCustom.ok || !explicitPort.ok) return;
+  assert.equal(toTelnet.updatedHost.port, 23);
+  assert.equal(toSsh.updatedHost.port, 22);
+  assert.equal(keepCustom.updatedHost.port, 2222);
+  assert.equal(explicitPort.updatedHost.port, 2323);
 });
 
 test('applyVaultHostUpdate can switch a host to a referenced key path', () => {

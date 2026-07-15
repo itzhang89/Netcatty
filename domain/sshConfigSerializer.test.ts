@@ -100,18 +100,39 @@ test("serializeHostsToSshConfig encodes Host pattern characters as literal alias
   const encoded = serializeHostsToSshConfig([makeHost({ label: "prod*" })]);
   const literal = serializeHostsToSshConfig([makeHost({ label: "prod-2a-" })]);
   const leadingDash = serializeHostsToSshConfig([makeHost({ label: "-jump" })]);
+  const quoted = serializeHostsToSshConfig([makeHost({ label: 'bad"alias' })]);
+  const escaped = serializeHostsToSshConfig([makeHost({ label: 'bad\\alias' })]);
 
   assert.match(encoded, /^Host netcatty-encoded-/m);
   assert.match(literal, /^Host prod-2a-$/m);
   assert.notEqual(encoded.match(/^Host (.+)$/m)?.[1], literal.match(/^Host (.+)$/m)?.[1]);
   assert.match(leadingDash, /^Host netcatty-encoded-/m);
   assert.doesNotMatch(leadingDash, /^Host -/m);
+  assert.match(quoted, /^Host netcatty-encoded-/m);
+  assert.doesNotMatch(quoted, /^Host .*"/m);
+  assert.match(escaped, /^Host netcatty-encoded-/m);
+  assert.doesNotMatch(escaped, /^Host .*\\/m);
 });
 
 test("serializeHostsToSshConfig quotes usernames containing spaces", () => {
   const config = serializeHostsToSshConfig([makeHost({ username: "alice smith" })]);
 
   assert.match(config, /^ {4}User "alice smith"$/m);
+});
+
+test("serializeHostsToSshConfig escapes quoted SSH arguments", () => {
+  const config = serializeHostsToSshConfig([makeHost({
+    hostname: 'bad"host',
+    username: 'alice"ops',
+    identityFilePaths: ['~/.ssh/id"quoted', '~/.ssh/id\\backslash'],
+    identityAgent: '/tmp/agent"socket',
+  })]);
+
+  assert.match(config, /^ {4}HostName "bad\\"host"$/m);
+  assert.match(config, /^ {4}User "alice\\"ops"$/m);
+  assert.match(config, /^ {4}IdentityFile "~\/\.ssh\/id\\"quoted"$/m);
+  assert.match(config, /^ {4}IdentityFile "~\/\.ssh\/id\\\\backslash"$/m);
+  assert.match(config, /^ {4}IdentityAgent "\/tmp\/agent\\"socket"$/m);
 });
 
 test("serializeHostsToSshConfig rejects ProxyJump separator injection", () => {
