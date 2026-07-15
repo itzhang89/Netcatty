@@ -420,6 +420,7 @@ function createMoshConnectSniffer() {
  */
 function buildMoshClientEnv({ baseEnv, key, lang, fallbackHost }) {
   const env = { ...(baseEnv || {}), MOSH_KEY: key };
+  delete env.MOSH_FALLBACK_HOST;
   if (fallbackHost) env.MOSH_FALLBACK_HOST = fallbackHost;
   if (lang && !env.LANG) env.LANG = lang;
   if (!env.TERM) env.TERM = "xterm-256color";

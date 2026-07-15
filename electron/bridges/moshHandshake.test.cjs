@@ -294,6 +294,14 @@ test("buildMoshClientEnv defaults TERM when missing", () => {
   assert.equal(env.TERM, "xterm-256color");
 });
 
+test("buildMoshClientEnv drops a stale fallback host when this handshake has none", () => {
+  const base = { MOSH_FALLBACK_HOST: "stale.example" };
+  const env = buildMoshClientEnv({ baseEnv: base, key: "k", lang: "C" });
+
+  assert.equal(env.MOSH_FALLBACK_HOST, undefined);
+  assert.equal(base.MOSH_FALLBACK_HOST, "stale.example", "input env should not be mutated");
+});
+
 test("resolveSshExecutable prefers PATH lookups", () => {
   const resolved = resolveSshExecutable({
     findExecutable: () => "/opt/ssh/bin/ssh",
