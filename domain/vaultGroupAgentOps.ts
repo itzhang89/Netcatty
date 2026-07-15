@@ -10,6 +10,8 @@ type GroupState = {
 
 type Result = { ok: true; state: GroupState; config?: GroupConfig } | { ok: false; error: string };
 
+type JumpGraphIssue = { key: string; error: string };
+
 const normalizePath = (value: unknown): string => String(value ?? '')
   .replace(/\\/g, '/')
   .split('/')
@@ -37,6 +39,50 @@ const bool = (value: unknown): boolean | undefined => {
   if (['true', '1', 'yes'].includes(normalized)) return true;
   if (['false', '0', 'no'].includes(normalized)) return false;
   return undefined;
+};
+
+const collectJumpGraphIssues = (state: Pick<GroupState, 'configs' | 'hosts'>): Map<string, JumpGraphIssue> => {
+  const effectiveHosts = new Map(state.hosts.map((host) => {
+    const effectiveHost = host.group
+      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, state.configs))
+      : host;
+    return [host.id, effectiveHost];
+  }));
+  const issues = new Map<string, JumpGraphIssue>();
+  for (const [targetId, target] of effectiveHosts) {
+    for (const jumpHostId of target.hostChain?.hostIds ?? []) {
+      if (jumpHostId === targetId) {
+        const issue = {
+          key: `${targetId}:${jumpHostId}:self`,
+          error: `Host "${targetId}" cannot use itself as an inherited jump host.`,
+        };
+        issues.set(issue.key, issue);
+        continue;
+      }
+      const jumpHost = effectiveHosts.get(jumpHostId);
+      if (!jumpHost) {
+        const issue = {
+          key: `${targetId}:${jumpHostId}:missing`,
+          error: `Jump host "${jumpHostId}" was not found.`,
+        };
+        issues.set(issue.key, issue);
+        continue;
+      }
+      if (jumpHost.protocol !== undefined && jumpHost.protocol !== 'ssh') {
+        const issue = {
+          key: `${targetId}:${jumpHostId}:protocol`,
+          error: `Jump host "${jumpHostId}" does not support SSH jump connections.`,
+        };
+        issues.set(issue.key, issue);
+      }
+    }
+  }
+  return issues;
+};
+
+const findIntroducedJumpGraphIssue = (before: GroupState, after: GroupState): JumpGraphIssue | undefined => {
+  const previousIssues = collectJumpGraphIssues(before);
+  return [...collectJumpGraphIssues(after).values()].find((issue) => !previousIssues.has(issue.key));
 };
 
 export function patchGroupConfig(
@@ -184,14 +230,17 @@ export function upsertGroup(
     ...state.configs.filter((config) => config.path !== path).map((config) => ({ ...config, path: rename(config.path) })),
     patched.config,
   ];
+  const nextState: GroupState = {
+    groups,
+    configs,
+    hosts: state.hosts.map((host) => host.group ? { ...host, group: rename(host.group) } : host),
+    managedSources: state.managedSources.map((source) => ({ ...source, groupName: rename(source.groupName) })),
+  };
+  const jumpGraphIssue = findIntroducedJumpGraphIssue(state, nextState);
+  if (jumpGraphIssue) return { ok: false, error: jumpGraphIssue.error };
   return {
     ok: true,
-    state: {
-      groups,
-      configs,
-      hosts: state.hosts.map((host) => host.group ? { ...host, group: rename(host.group) } : host),
-      managedSources: state.managedSources.map((source) => ({ ...source, groupName: rename(source.groupName) })),
-    },
+    state: nextState,
     config: patched.config,
   };
 }
@@ -204,17 +253,17 @@ export function deleteGroup(state: GroupState, pathValue: unknown, deleteHosts: 
   }
   const inside = (candidate?: string) => Boolean(candidate && (candidate === path || candidate.startsWith(`${path}/`)));
   const hasManagedParent = state.managedSources.some((source) => path.startsWith(`${source.groupName}/`));
-  return {
-    ok: true,
-    state: {
-      groups: state.groups.filter((group) => !inside(group)),
-      configs: state.configs.filter((config) => !inside(config.path)),
-      hosts: deleteHosts
-        ? state.hosts.filter((host) => !inside(host.group))
-        : state.hosts.map((host) => inside(host.group)
-          ? { ...host, group: undefined, ...(hasManagedParent ? {} : { managedSourceId: undefined }) }
-          : host),
-      managedSources: state.managedSources,
-    },
+  const nextState: GroupState = {
+    groups: state.groups.filter((group) => !inside(group)),
+    configs: state.configs.filter((config) => !inside(config.path)),
+    hosts: deleteHosts
+      ? state.hosts.filter((host) => !inside(host.group))
+      : state.hosts.map((host) => inside(host.group)
+        ? { ...host, group: undefined, ...(hasManagedParent ? {} : { managedSourceId: undefined }) }
+        : host),
+    managedSources: state.managedSources,
   };
+  const jumpGraphIssue = findIntroducedJumpGraphIssue(state, nextState);
+  if (jumpGraphIssue) return { ok: false, error: jumpGraphIssue.error };
+  return { ok: true, state: nextState };
 }

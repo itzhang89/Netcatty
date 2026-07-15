@@ -364,11 +364,24 @@ test('applyVaultHostUpdate keeps referenced jump hosts SSH-capable', () => {
     [jump, target], [], jump.id, { group: 'telnet-hosts' },
     { resolveEffectiveHost: (host) => host.group === 'telnet-hosts' ? { ...host, protocol: 'telnet' } : host },
   );
+  const groupInheritedResult = applyVaultHostUpdate(
+    [jump, { ...target, hostChain: undefined, group: 'prod' }],
+    [],
+    jump.id,
+    { protocol: 'telnet' },
+    {
+      resolveEffectiveHost: (host) => host.group === 'prod'
+        ? { ...host, hostChain: { hostIds: [jump.id] } }
+        : host,
+    },
+  );
 
   assert.equal(directResult.ok, false);
   if (!directResult.ok) assert.match(directResult.error, /used as a jump host must keep an SSH/i);
   assert.equal(inheritedResult.ok, false);
   if (!inheritedResult.ok) assert.match(inheritedResult.error, /used as a jump host must keep an SSH/i);
+  assert.equal(groupInheritedResult.ok, false);
+  if (!groupInheritedResult.ok) assert.match(groupInheritedResult.error, /used as a jump host must keep an SSH/i);
 });
 
 test('applyVaultHostUpdate keeps legacy serial hosts editable without serialConfig', () => {

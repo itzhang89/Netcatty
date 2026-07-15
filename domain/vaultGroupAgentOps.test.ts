@@ -56,7 +56,7 @@ describe('vaultGroupAgentOps', () => {
   it('validates jump hosts against their destination group after a rename', () => {
     const jump: Host = {
       id: 'moving-jump', label: 'Moving jump', hostname: 'jump.test', username: 'root',
-      group: 'ssh/prod', tags: [], os: 'linux',
+      group: 'ssh/prod', hostChain: { hostIds: [] }, tags: [], os: 'linux',
     };
     const toTelnet = upsertGroup({
       groups: ['ssh', 'ssh/prod', 'telnet'],
@@ -73,6 +73,29 @@ describe('vaultGroupAgentOps', () => {
 
     assert.equal(toTelnet.ok, false);
     assert.equal(toSsh.ok, true);
+  });
+
+  it('rejects group changes that introduce invalid inherited jump relationships', () => {
+    const jump: Host = {
+      id: 'moving-jump', label: 'Moving jump', hostname: 'jump.test', username: 'root',
+      group: 'ssh/prod', tags: [], os: 'linux',
+    };
+    const outsideTarget: Host = {
+      id: 'outside-target', label: 'Outside target', hostname: 'target.test', username: 'root',
+      hostChain: { hostIds: [jump.id] }, tags: [], os: 'linux',
+    };
+    const renameResult = upsertGroup({
+      groups: ['ssh', 'ssh/prod', 'telnet'],
+      configs: [{ path: 'ssh', protocol: 'ssh' }, { path: 'telnet', protocol: 'telnet' }],
+      hosts: [jump, outsideTarget],
+      managedSources: [],
+    }, 'ssh/prod', '{}', [], proxyProfiles, { newPath: 'telnet/prod' });
+    const selfResult = upsertGroup({
+      groups: ['prod'], configs: [], hosts: [{ ...jump, group: 'prod' }], managedSources: [],
+    }, 'prod', '{"jumpHostIds":["moving-jump"]}', [], proxyProfiles);
+
+    assert.equal(renameResult.ok, false);
+    assert.equal(selfResult.ok, false);
   });
 
   it('keeps create distinct from update and rejects self-descendant moves', () => {
@@ -125,6 +148,19 @@ describe('vaultGroupAgentOps', () => {
       ...state, managedSources: [{ id: 'source-1', groupName: 'prod' } as ManagedSource],
     }, 'prod', false);
     assert.equal(managed.ok, false);
+  });
+
+  it('refuses to delete hosts that are still used as jump hosts', () => {
+    const jump = { ...hosts[1]!, group: 'prod' };
+    const target: Host = {
+      id: 'target', label: 'Target', hostname: 'target.test', username: 'root',
+      hostChain: { hostIds: [jump.id] }, tags: [], os: 'linux',
+    };
+    const result = deleteGroup({
+      groups: ['prod'], configs: [], hosts: [jump, target], managedSources: [],
+    }, 'prod', true);
+
+    assert.equal(result.ok, false);
   });
 
   it('preserves managed status when deleting a subgroup under a managed parent', () => {
