@@ -19,6 +19,13 @@ const MOSH_PRIMARY_SCREEN_RESET = "\x1b[?1l\x1b[0m\x1b[?25h"
   + "\x1b[?1003l\x1b[?1002l\x1b[?1001l\x1b[?1000l"
   + "\x1b[?1015l\x1b[?1006l\x1b[?1005l";
 
+// The interactive SSH bootstrap can paint password prompts, MOTD text, and
+// mosh-server diagnostics into Netcatty's primary screen. MoshCatty then
+// reconstructs only the cells present in the remote Mosh state, so untouched
+// bootstrap cells would remain visible around the new shell. Clear the current
+// viewport at the successful handoff while preserving primary-screen scrollback.
+const MOSH_HANDSHAKE_VIEWPORT_RESET = "\x1b[2J\x1b[H";
+
 function withShellProbeTimeout(promise, timeoutMs) {
   const ms = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 3000;
   let timer = null;
@@ -668,6 +675,11 @@ function createMoshSessionApi(ctx) {
       session.proc = mcPty;
       session.pty = mcPty;
       session.moshHandshakePhase = "mosh-client";
+
+      // Establish the blank terminal baseline that mosh-client expects before
+      // its first reconstructed frame. Keep this ordered through the same
+      // output buffer as both the SSH bootstrap and Mosh client data.
+      bufferData(MOSH_HANDSHAKE_VIEWPORT_RESET);
 
       // Notify the renderer that the interactive mosh shell is ready. This is
       // distinct from the first SSH-handshake bytes (which can mark the

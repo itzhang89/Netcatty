@@ -595,6 +595,32 @@ test("startMoshSession tags handshake output and emits ready after mosh-client s
   assert.equal(h.sessions.get("mosh-test-session")?.moshHandshakePhase, "mosh-client");
 });
 
+test("startMoshSession clears successful SSH bootstrap output before the Mosh screen", async (t) => {
+  const h = makeHarness(t);
+  await h.bridge.startMoshSession(h.event, h.options, { moshClientLookup: h.lookupOpts });
+
+  h.spawns[0].emitData(
+    "Welcome to Ubuntu\r\nmosh-server (mosh 1.4.0)\r\nLicense GPLv3+\r\n",
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  h.spawns[0].emitData("MOSH CONNECT 60002 ABCDEFGHIJKLMNOPQRSTUV==\r\n");
+  h.spawns[0].emitExit({ exitCode: 0, signal: 0 });
+  h.spawns[1].emitData(Buffer.from("root@example:~# "));
+  await new Promise((resolve) => h.sessions.get("mosh-test-session").flushPendingData(resolve));
+
+  const terminalData = h.sent
+    .filter((evt) => evt.channel === "netcatty:data")
+    .map((evt) => evt.payload.data)
+    .join("");
+  const bootstrapIndex = terminalData.indexOf("Welcome to Ubuntu");
+  const clearIndex = terminalData.indexOf("\x1b[2J\x1b[H");
+  const promptIndex = terminalData.indexOf("root@example:~# ");
+
+  assert.ok(bootstrapIndex >= 0, "the interactive SSH bootstrap should remain visible while connecting");
+  assert.ok(clearIndex > bootstrapIndex, "the successful handoff should clear bootstrap cells");
+  assert.ok(promptIndex > clearIndex, "the Mosh screen should render onto the cleared viewport");
+});
+
 test("startMoshSession stashes stats-companion auth after a successful handshake", async (t) => {
   const h = makeHarness(t);
   await h.bridge.startMoshSession(
