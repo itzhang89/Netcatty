@@ -1,5 +1,9 @@
 import { createRequire } from "node:module";
-import { readFile } from "node:fs/promises";
+import {
+  lstat,
+  open,
+  readFile,
+} from "node:fs/promises";
 import path from "node:path";
 
 import type {
@@ -520,6 +524,47 @@ export async function readAndValidateManifest(
   pluginDirectory: string,
 ): Promise<PluginManifest> {
   const manifestPath = path.join(pluginDirectory, "netcatty.plugin.json");
-  const contents = await readFile(manifestPath);
+  const initialStats = await lstat(manifestPath);
+  if (!initialStats.isFile()) {
+    throw new Error("Plugin manifest must be a regular file");
+  }
+  if (initialStats.size > PACKAGE_LIMITS.manifestBytes) {
+    throw new Error(`Plugin manifest exceeds ${PACKAGE_LIMITS.manifestBytes} bytes`);
+  }
+  const handle = await open(manifestPath, "r");
+  let contents: Uint8Array;
+  try {
+    const [openedStats, currentStats] = await Promise.all([
+      handle.stat(),
+      lstat(manifestPath),
+    ]);
+    if (!openedStats.isFile() || !currentStats.isFile()) {
+      throw new Error("Plugin manifest must be a regular file");
+    }
+    if (openedStats.dev !== currentStats.dev || openedStats.ino !== currentStats.ino) {
+      throw new Error("Plugin manifest changed while being opened");
+    }
+    if (openedStats.size > PACKAGE_LIMITS.manifestBytes) {
+      throw new Error(`Plugin manifest exceeds ${PACKAGE_LIMITS.manifestBytes} bytes`);
+    }
+    const buffer = new Uint8Array(PACKAGE_LIMITS.manifestBytes + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.byteLength) {
+      const result = await handle.read(
+        buffer,
+        bytesRead,
+        buffer.byteLength - bytesRead,
+        null,
+      );
+      if (result.bytesRead === 0) break;
+      bytesRead += result.bytesRead;
+    }
+    if (bytesRead > PACKAGE_LIMITS.manifestBytes) {
+      throw new Error(`Plugin manifest exceeds ${PACKAGE_LIMITS.manifestBytes} bytes`);
+    }
+    contents = buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
   return parseAndValidateManifestContents(contents);
 }

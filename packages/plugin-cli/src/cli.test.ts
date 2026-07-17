@@ -7,6 +7,7 @@ import {
   readFile,
   rm,
   symlink,
+  truncate,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -526,9 +527,18 @@ test("packer rejects outputs inside the plugin source tree", async (context) => 
 test("manifest byte limit is enforced before JSON parsing", async (context) => {
   const root = await mkdtemp(path.join(tmpdir(), "netcatty-plugin-limit-"));
   context.after(() => rm(root, { recursive: true, force: true }));
-  await writeFile(
-    path.join(root, "netcatty.plugin.json"),
-    `{"padding":"${"x".repeat(PACKAGE_LIMITS.manifestBytes)}"}`,
-  );
+  const manifestPath = path.join(root, "netcatty.plugin.json");
+  await writeFile(manifestPath, "{}");
+  await truncate(manifestPath, PACKAGE_LIMITS.manifestBytes * 4);
   await assert.rejects(readAndValidateManifest(root), /manifest exceeds/);
+});
+
+test("manifest validation refuses symlinked source manifests", async (context) => {
+  if (process.platform === "win32") return;
+  const root = await mkdtemp(path.join(tmpdir(), "netcatty-plugin-manifest-link-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const target = path.join(root, "target.json");
+  await writeFile(target, JSON.stringify(manifest()));
+  await symlink(target, path.join(root, "netcatty.plugin.json"));
+  await assert.rejects(readAndValidateManifest(root), /must be a regular file/);
 });
