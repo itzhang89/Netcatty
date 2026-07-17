@@ -134,6 +134,23 @@ async function startPortForward(event, payload) {
     sshTcpConnectTimeoutMs,
     sshAuthReadyTimeoutMs,
   } = payload;
+
+  // The rule is the durable identity; tunnelId is only one renderer's
+  // attempt. Reuse an in-flight/live tunnel so two windows cannot create
+  // duplicate listeners for the same saved rule.
+  if (ruleId) {
+    for (const [existingTunnelId, existingTunnel] of portForwardingTunnels) {
+      if (existingTunnel.ruleId !== ruleId) continue;
+      if (existingTunnel.cancelled && !existingTunnel.cleanupFailed) continue;
+      return {
+        tunnelId: existingTunnelId,
+        success: true,
+        reused: true,
+        status: existingTunnel.status || 'active',
+      };
+    }
+  }
+
   const connectionTimeouts = resolveSshConnectionTimeouts({
     sshTcpConnectTimeoutMs,
     sshAuthReadyTimeoutMs,
@@ -744,6 +761,7 @@ async function listPortForwards() {
   const list = [];
   for (const [tunnelId, tunnel] of portForwardingTunnels) {
     list.push({
+      ruleId: tunnel.ruleId,
       tunnelId,
       type: tunnel.type,
       status: tunnel.status || 'active',

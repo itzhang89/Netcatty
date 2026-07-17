@@ -6,7 +6,10 @@ import {
   STORAGE_KEY_PF_VIEW_MODE,
   STORAGE_KEY_PORT_FORWARDING,
 } from "../../infrastructure/config/storageKeys";
-import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
+import {
+  LOCAL_STORAGE_ADAPTER_CHANGED_EVENT,
+  localStorageAdapter,
+} from "../../infrastructure/persistence/localStorageAdapter";
 import {
   clearReconnectTimer,
   getActiveConnection,
@@ -119,6 +122,37 @@ const normalizeRulesWithConnections = (rules: PortForwardingRule[]): PortForward
   });
 };
 
+const isPortForwardingStorageEvent = (event: Event): boolean => {
+  const key = event.type === "storage"
+    ? (event as StorageEvent).key
+    : (event as CustomEvent<{ key?: string }>).detail?.key;
+  return key === STORAGE_KEY_PORT_FORWARDING;
+};
+
+export const createPortForwardingStorageSyncHandlers = ({
+  onRules,
+}: {
+  onRules: (rules: PortForwardingRule[]) => void;
+}) => {
+  const syncFromStorage = () => {
+    const storedRules = localStorageAdapter.read<PortForwardingRule[]>(
+      STORAGE_KEY_PORT_FORWARDING,
+    );
+    if (storedRules && Array.isArray(storedRules)) {
+      onRules(normalizeRulesWithConnections(storedRules));
+    }
+  };
+
+  const handleChange = (event: Event) => {
+    if (isPortForwardingStorageEvent(event)) syncFromStorage();
+  };
+
+  return {
+    handleAdapterChange: handleChange,
+    handleBrowserStorage: handleChange,
+  };
+};
+
 // Initialization Logic
 const initializeStore = async () => {
   if (isInitialized) return;
@@ -173,29 +207,35 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     };
   }, [rules]);
 
-  // Listen for storage events for cross-window sync (main window <-> tray panel)
+  // Listen for both browser storage events (other windows) and adapter
+  // events (this window). Auto-start writes statuses outside this hook, so
+  // relying on the browser event alone leaves the launching window stale.
   useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      // Only handle changes from our specific key
-      if (e.key !== STORAGE_KEY_PORT_FORWARDING) return;
-
-      // Parse the new value
-      if (e.newValue) {
-        try {
-          const newRules = JSON.parse(e.newValue) as PortForwardingRule[];
-          if (Array.isArray(newRules)) {
-            // Update global state without triggering another localStorage write
-            globalRules = normalizeRulesWithConnections(newRules);
-            notifyListeners();
-          }
-        } catch {
-          // ignore parse errors
-        }
-      }
+    const target = globalThis as typeof globalThis & {
+      addEventListener?: (type: string, listener: EventListener) => void;
+      removeEventListener?: (type: string, listener: EventListener) => void;
     };
+    if (typeof target.addEventListener !== "function") return;
 
-    window.addEventListener("storage", handleStorageChange);
-    return () => window.removeEventListener("storage", handleStorageChange);
+    const handlers = createPortForwardingStorageSyncHandlers({
+      onRules: (newRules) => {
+        globalRules = newRules;
+        notifyListeners();
+      },
+    });
+
+    target.addEventListener(
+      LOCAL_STORAGE_ADAPTER_CHANGED_EVENT,
+      handlers.handleAdapterChange,
+    );
+    target.addEventListener("storage", handlers.handleBrowserStorage);
+    return () => {
+      target.removeEventListener?.(
+        LOCAL_STORAGE_ADAPTER_CHANGED_EVENT,
+        handlers.handleAdapterChange,
+      );
+      target.removeEventListener?.("storage", handlers.handleBrowserStorage);
+    };
   }, []);
 
   // Listen for cross-window reconnect cancellation events.

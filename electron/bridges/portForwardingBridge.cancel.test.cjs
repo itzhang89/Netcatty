@@ -11,6 +11,7 @@ const {
   stopPortForward,
   stopPortForwardByRuleId,
   getPortForwardStatus,
+  listPortForwards,
   cancelTunnel,
   shouldFinalizeTunnelClose,
 } = require("./portForwardingBridge.cjs");
@@ -100,6 +101,7 @@ test("port forwarding can be stopped while waiting for a key passphrase", async 
     }),
   };
   const startPromise = startPortForward(event, {
+    ruleId: "rule-cancel-1",
     tunnelId,
     type: "local",
     localPort: 0,
@@ -118,6 +120,12 @@ test("port forwarding can be stopped while waiting for a key passphrase", async 
     status: "connecting",
     type: "local",
   });
+  assert.deepEqual(await listPortForwards(), [{
+    ruleId: "rule-cancel-1",
+    tunnelId,
+    type: "local",
+    status: "connecting",
+  }]);
 
   assert.deepEqual(await stopPortForward(event, { tunnelId }), {
     tunnelId,
@@ -178,6 +186,66 @@ test("port forwarding stops when the key passphrase prompt is cancelled", async 
     tunnelId,
     status: "inactive",
   });
+});
+
+test("concurrent starts reuse the existing tunnel for the same rule", async (t) => {
+  const keyPath = createEncryptedKey(t);
+  if (!keyPath) return;
+  const privateKey = fs.readFileSync(keyPath, "utf8");
+
+  let promptCount = 0;
+  let firstPromptStarted;
+  const promptStarted = new Promise((resolve) => {
+    firstPromptStarted = resolve;
+  });
+  const event = {
+    sender: createCapturingSender((channel) => {
+      if (channel === "netcatty:passphrase-request") {
+        promptCount++;
+        firstPromptStarted();
+      }
+    }),
+  };
+  const payload = {
+    ruleId: "shared-rule",
+    type: "local",
+    localPort: 0,
+    bindAddress: "127.0.0.1",
+    remoteHost: "127.0.0.1",
+    remotePort: 80,
+    hostname: "example.test",
+    username: "alice",
+    privateKey,
+    keyId: "key-shared",
+  };
+
+  const firstStart = startPortForward(event, {
+    ...payload,
+    tunnelId: "pf-shared-rule-first",
+  });
+  await promptStarted;
+
+  const secondStart = await startPortForward(event, {
+    ...payload,
+    tunnelId: "pf-shared-rule-second",
+  });
+
+  assert.deepEqual(secondStart, {
+    tunnelId: "pf-shared-rule-first",
+    success: true,
+    reused: true,
+    status: "connecting",
+  });
+  assert.equal(promptCount, 1);
+  assert.deepEqual(await listPortForwards(), [{
+    ruleId: "shared-rule",
+    tunnelId: "pf-shared-rule-first",
+    type: "local",
+    status: "connecting",
+  }]);
+
+  assert.equal(stopPortForwardByRuleId(event, { ruleId: "shared-rule" }).stopped, 1);
+  assert.equal((await firstStart).cancelled, true);
 });
 
 test("stop by rule id only cancels the matching passphrase prompt", async (t) => {

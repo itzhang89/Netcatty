@@ -234,6 +234,8 @@ declare global {
     tunnelId: string;
     success: boolean;
     cancelled?: boolean;
+    reused?: boolean;
+    status?: 'inactive' | 'connecting' | 'active' | 'error';
     error?: string;
   }
 

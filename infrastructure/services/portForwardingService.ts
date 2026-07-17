@@ -377,6 +377,11 @@ const parseRuleIdFromTunnelId = (tunnelId: string): string | null => {
   return ruleId;
 };
 
+const resolveBackendRuleId = (tunnel: { ruleId?: string; tunnelId: string }): string | null => {
+  const explicitRuleId = tunnel.ruleId?.trim();
+  return explicitRuleId || parseRuleIdFromTunnelId(tunnel.tunnelId);
+};
+
 /**
  * Sync active connections with backend
  * Called on app startup to restore state of tunnels that may still be running
@@ -395,7 +400,7 @@ export const syncWithBackend = async (): Promise<void> => {
     logger.info(`[PortForwardingService] Backend reports ${activeTunnels.length} active tunnels`);
     
     for (const tunnel of activeTunnels) {
-      const ruleId = parseRuleIdFromTunnelId(tunnel.tunnelId);
+      const ruleId = resolveBackendRuleId(tunnel);
       if (ruleId) {
         // Update local connection tracking
         activeConnections.set(ruleId, {
@@ -438,7 +443,7 @@ export const reconcileWithBackend = async (): Promise<{
     const backendRuleIds = new Set<string>();
 
     for (const tunnel of backendTunnels) {
-      const ruleId = parseRuleIdFromTunnelId(tunnel.tunnelId);
+      const ruleId = resolveBackendRuleId(tunnel);
       if (ruleId) {
         backendRuleIds.add(ruleId);
 
@@ -525,6 +530,7 @@ export const startPortForward = async (
     && (existingConnection.status === 'active' || existingConnection.status === 'connecting')
     && !existingConnection.reconnectStartAuthorized
   ) {
+    onStatusChange(existingConnection.status, existingConnection.error);
     return { success: true };
   }
   if (existingConnection) existingConnection.reconnectStartAuthorized = false;
@@ -758,6 +764,21 @@ export const startPortForward = async (
       onStatusChange('error', result.error);
       return { success: false, error: result.error };
     }
+
+    if (result.reused && result.tunnelId) {
+      // A different window won the start race. Adopt the backend's durable
+      // tunnel instead of keeping this renderer's unused attempt id.
+      unsubscribe?.();
+      const adoptedStatus = result.status === 'active' ? 'active' : 'connecting';
+      activeConnections.set(rule.id, {
+        ruleId: rule.id,
+        tunnelId: result.tunnelId,
+        status: adoptedStatus,
+        reconnectAttempts: existingConn?.reconnectAttempts ?? 0,
+      });
+      onStatusChange(adoptedStatus);
+      return { success: true };
+    }
     
     // Reset reconnect attempts on successful connection
     const conn = activeConnections.get(rule.id);
@@ -795,29 +816,37 @@ export const stopPortForward = async (
   // Clear any pending reconnect timer
   clearReconnectTimer(ruleId);
   
-  if (!conn) {
+  if (!bridge?.stopPortForwardByRuleId && !conn) {
     onStatusChange('inactive');
     return { success: true };
   }
-  
-  if (!bridge?.stopPortForward) {
+
+  if (!bridge?.stopPortForwardByRuleId && !bridge?.stopPortForward) {
     // Fallback for browser/dev mode
     logger.warn('[PortForwardingService] Backend not available, simulating stop...');
-    conn.unsubscribe?.();
+    conn?.unsubscribe?.();
     activeConnections.delete(ruleId);
     onStatusChange('inactive');
     return { success: true };
   }
-  
+
   try {
-    const result = await bridge.stopPortForward(conn.tunnelId);
-    
-    conn.unsubscribe?.();
+    if (bridge.stopPortForwardByRuleId) {
+      const result = await bridge.stopPortForwardByRuleId(ruleId);
+      if ((result.failed ?? 0) > 0) {
+        const error = result.errors?.filter(Boolean).join('; ') ||
+          `Failed to stop ${result.failed} port forwarding tunnel(s)`;
+        return { success: false, error };
+      }
+    } else if (conn && bridge.stopPortForward) {
+      const result = await bridge.stopPortForward(conn.tunnelId);
+      if (!result.success) return result;
+    }
+
+    conn?.unsubscribe?.();
     activeConnections.delete(ruleId);
     onStatusChange('inactive');
-    
-    return result;
-    
+    return { success: true };
   } catch (err) {
     const error = err instanceof Error ? err.message : 'Unknown error';
     return { success: false, error };
