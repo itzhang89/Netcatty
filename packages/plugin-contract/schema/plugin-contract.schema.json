@@ -55,6 +55,16 @@
       "maxLength": 128,
       "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$"
     },
+    "SecretRef": {
+      "description": "An opaque host-issued reference to secret material. The identifier is never sufficient authority on its own; privileged consumers must revalidate plugin ownership and operation scope.",
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "const": "secret" },
+        "id": { "type": "string", "minLength": 16, "maxLength": 256 }
+      },
+      "additionalProperties": false
+    },
     "SemanticVersion": {
       "type": "string",
       "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"

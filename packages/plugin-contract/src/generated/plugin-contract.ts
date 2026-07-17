@@ -325,6 +325,11 @@ export type RuntimeInitializeSuccess = {
   result: RuntimeInitializeResult;
 };
 
+export type SecretRef = {
+  kind: "secret";
+  id: string;
+};
+
 export type SemanticVersion = string;
 
 export type SemverRange = string;

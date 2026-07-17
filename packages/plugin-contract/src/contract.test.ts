@@ -126,6 +126,7 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
   const initializeSuccess = validator("RuntimeInitializeSuccess");
   const permission = validator("PermissionRequest");
   const permissionDecision = validator("PermissionDecision");
+  const secretRef = validator("SecretRef");
   const provider = validator("ProviderRequest");
   const providerResult = validator("ProviderResult");
 
@@ -274,6 +275,10 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
   assert.equal(permissionDecision({ requestId: "p1", decision: "allow", scope: "once" }), true);
   assert.equal(permissionDecision({ requestId: "p1", decision: "allow" }), false);
   assert.equal(permissionDecision({ requestId: "p1", decision: "deny", scope: "always" }), false);
+  assert.equal(secretRef({ kind: "secret", id: "secret-reference-1" }), true);
+  assert.equal(secretRef({ kind: "secret", id: "short" }), false);
+  assert.equal(secretRef({ kind: "secret", id: "secret-reference-1", value: "plaintext" }), false);
+  assert.equal(secretRef({ kind: "credential", id: "secret-reference-1" }), false);
   assert.equal(provider({
     providerId: "com.example.contract-test.completion",
     operation: "provideCompletions",

@@ -116,6 +116,9 @@ Secret values are never ordinary settings or JSON-RPC results. The credential
 broker uses operation-bound, single-use leases. Terminal sensitive-input mode
 bypasses third-party hooks unconditionally. Logs, diagnostics, synchronization,
 and crash reports redact secret fields before persistence.
+The SDK secret store returns an opaque `SecretRef`, never stored plaintext. The
+reference is not treated as a bearer capability: every privileged use must
+revalidate the calling plugin, resource ownership, permission, and operation.
 
 ### Denial of service
 

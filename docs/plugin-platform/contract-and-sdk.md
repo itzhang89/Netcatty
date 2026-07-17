@@ -303,7 +303,15 @@ lifecycle primitives:
   host abort controllers;
 - `PluginError` carries a stable machine-readable error code and JSON details;
 - `PluginContext` exposes the exact Netcatty/API versions, negotiated feature
-  set, storage, secret storage, logging, and subscriptions.
+  set, storage, opaque secret references, logging, and subscriptions.
+
+`PluginSecretStore.get()` never returns plaintext. It returns a host-issued
+`SecretRef`, and `set()` immediately transfers a value already known to the
+plugin into host storage before returning the same kind of reference. Future
+network, authentication, and companion brokers consume the reference while the
+main process revalidates plugin ownership and operation scope. A `SecretRef` is
+an identifier, not a bearer capability, and must never bypass those checks.
+Host-rendered password settings likewise expose only references to plugin code.
 
 The context interfaces are contracts only in phase 1. The isolated host in
 phase 2 and capability brokers in phase 3 provide their implementations.
@@ -410,9 +418,12 @@ later:
 10. Manifest schema validation is followed by semantic package validation.
     This enforces NFC paths and content-dependent rules that JSON Schema cannot
     represent by itself.
-11. Contribution IDs use the exact owning plugin ID as their namespace.
-12. Engine ranges and required features are checked before activation.
-13. Companion stdio uses bounded Content-Length-framed UTF-8 JSON; newline JSON
+11. Secret reads return opaque `SecretRef` values. Plaintext is never a normal
+    SDK storage result, and possession of a reference never replaces identity,
+    permission, ownership, or operation checks at the privileged boundary.
+12. Contribution IDs use the exact owning plugin ID as their namespace.
+13. Engine ranges and required features are checked before activation.
+14. Companion stdio uses bounded Content-Length-framed UTF-8 JSON; newline JSON
     and unbounded reads are not compatible transports.
 
 ## Phase-consumer audit and evolution rules

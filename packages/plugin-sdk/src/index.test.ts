@@ -12,6 +12,22 @@ import {
   pluginErrorToRpcError,
   throwIfCancellationRequested,
 } from "./index.ts";
+import type { PluginSecretStore, SecretRef } from "./index.ts";
+
+const testSecretRef: SecretRef = {
+  kind: "secret",
+  id: "secret-reference-1",
+};
+
+const testSecretStore: PluginSecretStore = {
+  async get() {
+    return testSecretRef;
+  },
+  async set() {
+    return testSecretRef;
+  },
+  async delete() {},
+};
 
 test("PluginError maps stable SDK codes to stable JSON-RPC wire errors", () => {
   const error = new PluginError("permission_denied", "Approval required", { scope: "terminal" });
@@ -54,6 +70,12 @@ test("PluginError wire mapping covers the exact contract schema enums", async ()
 test("definePlugin preserves the exact plugin object", () => {
   const plugin = definePlugin({ activate() {} });
   assert.equal(typeof plugin.activate, "function");
+});
+
+test("PluginSecretStore exposes opaque references instead of plaintext reads", async () => {
+  assert.deepEqual(await testSecretStore.get("token"), testSecretRef);
+  assert.deepEqual(await testSecretStore.set("token", "already-known-value"), testSecretRef);
+  assert.equal("value" in testSecretRef, false);
 });
 
 test("DisposableStore disposes every item once", () => {

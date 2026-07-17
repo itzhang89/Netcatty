@@ -6,6 +6,7 @@ import type {
   PluginId,
   PluginWireErrorCode,
   RpcErrorObject,
+  SecretRef,
   SemanticVersion,
 } from "@netcatty/plugin-contract";
 
@@ -37,8 +38,8 @@ export interface PluginKeyValueStore {
 }
 
 export interface PluginSecretStore {
-  get(key: string): Promise<string | undefined>;
-  set(key: string, value: string): Promise<void>;
+  get(key: string): Promise<SecretRef | undefined>;
+  set(key: string, value: string): Promise<SecretRef>;
   delete(key: string): Promise<void>;
 }
 
