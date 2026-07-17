@@ -33,6 +33,7 @@ let cachedTempDir = null;
 let cachedTempDirIdentity = null;
 let tempFileCounter = 0;
 let toolOutputSigningKeyPromise = Promise.resolve(crypto.randomBytes(32));
+let toolOutputSigningKeyRecoveryPromise = null;
 let toolOutputSafeStorage = null;
 const toolOutputSessionDeletions = new Map();
 const toolOutputChatDeletionGenerations = new Map();
@@ -66,7 +67,9 @@ async function loadOrCreateToolOutputSigningKey(safeStorage) {
         const decoded = Buffer.from(safeStorage.decryptString(encrypted), "base64");
         if (decoded.length === 32) return decoded;
       } catch {
-        // Replace a key that the current secure storage can no longer decrypt.
+        // A locked or temporarily unavailable OS keychain must not destroy the
+        // only key capable of verifying previously persisted output.
+        return null;
       }
     }
     if ((stat.isFile() || stat.isSymbolicLink())) {
@@ -101,7 +104,25 @@ async function loadOrCreateToolOutputSigningKey(safeStorage) {
 function configureToolOutputSigningKey(electronModule) {
   if (!electronModule) return;
   toolOutputSafeStorage = electronModule.safeStorage;
+  toolOutputSigningKeyRecoveryPromise = null;
   toolOutputSigningKeyPromise = loadOrCreateToolOutputSigningKey(toolOutputSafeStorage);
+}
+
+async function getToolOutputSigningKey({ retry = true } = {}) {
+  const key = await toolOutputSigningKeyPromise.catch(() => null);
+  if (key || !retry || !toolOutputSafeStorage) return key;
+  if (toolOutputSigningKeyRecoveryPromise) return toolOutputSigningKeyRecoveryPromise;
+  const recovery = loadOrCreateToolOutputSigningKey(toolOutputSafeStorage).catch(() => null);
+  toolOutputSigningKeyRecoveryPromise = recovery;
+  try {
+    const recovered = await recovery;
+    toolOutputSigningKeyPromise = Promise.resolve(recovered);
+    return recovered;
+  } finally {
+    if (toolOutputSigningKeyRecoveryPromise === recovery) {
+      toolOutputSigningKeyRecoveryPromise = null;
+    }
+  }
 }
 
 async function ensureToolOutputSigningKeyFile(key) {
@@ -137,8 +158,8 @@ function signToolOutputManifest(manifest, key) {
     .digest("hex");
 }
 
-async function hasValidToolOutputManifestSignature(manifest) {
-  const key = await toolOutputSigningKeyPromise;
+async function hasValidToolOutputManifestSignature(manifest, signingKey) {
+  const key = signingKey ?? await getToolOutputSigningKey();
   if (!key || !isBoundedString(manifest.signature, 64) || !/^[a-f0-9]{64}$/.test(manifest.signature)) return false;
   const expected = Buffer.from(signToolOutputManifest(manifest, key), "hex");
   const actual = Buffer.from(manifest.signature, "hex");
@@ -269,12 +290,14 @@ async function clearTempDir() {
   const tempDir = getTempDir();
   let deletedCount = 0;
   let failedCount = 0;
+  const resetUnavailableSigningKey = Boolean(toolOutputSafeStorage)
+    && !await getToolOutputSigningKey();
   
   try {
     const files = await fs.promises.readdir(tempDir);
     
     for (const file of files) {
-      if (file === TOOL_OUTPUT_SIGNING_KEY_FILE) continue;
+      if (file === TOOL_OUTPUT_SIGNING_KEY_FILE && !resetUnavailableSigningKey) continue;
       try {
         const filePath = path.join(tempDir, file);
         const stat = await fs.promises.stat(filePath);
@@ -293,6 +316,11 @@ async function clearTempDir() {
         failedCount++;
         console.log(`[TempDir] Could not delete ${file}: ${err.message}`);
       }
+    }
+
+    if (resetUnavailableSigningKey) {
+      toolOutputSigningKeyPromise = Promise.resolve(null);
+      await getToolOutputSigningKey();
     }
     
     console.log(`[TempDir] Cleanup complete: ${deletedCount} deleted, ${failedCount} failed`);
@@ -439,7 +467,7 @@ async function deleteToolOutputPair(filePath) {
   return manifestDeleted && contentDeleted;
 }
 
-async function readSafeManifest(manifestPath) {
+async function readSafeManifest(manifestPath, signingKey) {
   if (!isNetcattyTempPath(manifestPath) || !manifestPath.endsWith(".log.meta.json")) return null;
   let file;
   try {
@@ -460,7 +488,7 @@ async function readSafeManifest(manifestPath) {
     if (!isBoundedString(parsed.contentFile, 512) || path.basename(parsed.contentFile) !== parsed.contentFile) return null;
     if (!Number.isSafeInteger(parsed.contentBytes) || parsed.contentBytes < 0 || parsed.contentBytes > MAX_TOOL_OUTPUT_TEMP_BYTES) return null;
     if (!isBoundedString(parsed.contentSha256, 64) || !/^[a-f0-9]{64}$/.test(parsed.contentSha256)) return null;
-    if (!await hasValidToolOutputManifestSignature(parsed)) return null;
+    if (!await hasValidToolOutputManifestSignature(parsed, signingKey)) return null;
     const contentPath = path.join(getTempDir(), parsed.contentFile);
     if (toolOutputManifestPath(contentPath) !== manifestPath) return null;
     return { manifest: parsed, manifestPath, manifestStat: stat, contentPath };
@@ -492,6 +520,8 @@ async function verifyManifestContent(entry) {
 async function listToolOutputManifestEntries() {
   const tempDir = getTempDir();
   const entries = [];
+  const signingKey = await getToolOutputSigningKey();
+  if (!signingKey) return entries;
   let files = [];
   try {
     files = await fs.promises.readdir(tempDir);
@@ -500,14 +530,14 @@ async function listToolOutputManifestEntries() {
   }
   for (const file of files) {
     if (!file.endsWith(".log.meta.json")) continue;
-    const entry = await readSafeManifest(path.join(tempDir, file));
+    const entry = await readSafeManifest(path.join(tempDir, file), signingKey);
     if (entry) entries.push(entry);
   }
   return entries;
 }
 
 async function touchToolOutputEntry(entry, now = new Date()) {
-  const key = await toolOutputSigningKeyPromise;
+  const key = await getToolOutputSigningKey();
   if (!key) return false;
   const pendingPath = getTempFilePath(`${entry.manifest.record.handleId}.manifest.pending`);
   const manifest = {
@@ -572,7 +602,7 @@ async function cleanupExpiredToolOutputFiles(now = Date.now()) {
   let deletedCount = 0;
   try {
     const files = await fs.promises.readdir(tempDir);
-    const signingKeyAvailable = Boolean(await toolOutputSigningKeyPromise.catch(() => null));
+    const signingKeyAvailable = Boolean(await getToolOutputSigningKey());
     const managedContent = new Set();
     for (const file of files) {
       if (
@@ -647,7 +677,7 @@ async function cleanupExpiredToolOutputFiles(now = Date.now()) {
   } catch {
     // Temp persistence is optional; keep startup resilient.
   }
-  if (await toolOutputSigningKeyPromise.catch(() => null)) {
+  if (await getToolOutputSigningKey()) {
     await enforcePersistedToolOutputLimits();
   }
   return deletedCount;
@@ -760,10 +790,13 @@ function registerHandlers(ipcMain, shell, electronModule) {
     return { success: false };
   });
 
-  ipcMain.handle("netcatty:tempdir:toolOutputPersistenceStatus", async () => ({
-    durable: Boolean(await toolOutputSigningKeyPromise),
-    reason: await toolOutputSigningKeyPromise ? undefined : "Secure local storage is unavailable.",
-  }));
+  ipcMain.handle("netcatty:tempdir:toolOutputPersistenceStatus", async () => {
+    const durable = Boolean(await getToolOutputSigningKey());
+    return {
+      durable,
+      reason: durable ? undefined : "Secure local storage is unavailable.",
+    };
+  });
 
   ipcMain.handle("netcatty:tempdir:toolOutputWrite", async (_event, payload = {}) => {
     const content = String(payload.content ?? "");
@@ -792,7 +825,7 @@ function registerHandlers(ipcMain, shell, electronModule) {
       if (getToolOutputChatDeletionGeneration(record.chatSessionId) !== chatDeletionGeneration) {
         throw new Error("Chat session was cleared while output was being saved.");
       }
-      const signingKey = await toolOutputSigningKeyPromise;
+      const signingKey = await getToolOutputSigningKey();
       if (!signingKey) throw new Error("Secure local storage is unavailable.");
       if (!await ensureToolOutputSigningKeyFile(signingKey)) {
         throw new Error("Unable to prepare secure local storage.");

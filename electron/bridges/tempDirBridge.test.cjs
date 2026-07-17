@@ -585,10 +585,12 @@ test("tool output signing key survives a real process restart", async () => {
     'const bridge = require("./electron/bridges/tempDirBridge.cjs");',
     'const handlers = new Map();',
     'const secret = process.env.FAKE_SAFE_STORAGE_SECRET;',
+    'let keychainLocked = process.env.PHASE === "unlock";',
     'const safeStorage = {',
     '  isEncryptionAvailable: () => true,',
     '  encryptString: value => Buffer.from(`${secret}:${value}`, "utf8"),',
     '  decryptString: value => {',
+    '    if (keychainLocked) throw new Error("keychain locked");',
     '    const text = value.toString("utf8");',
     '    if (!text.startsWith(`${secret}:`)) throw new Error("wrong key");',
     '    return text.slice(secret.length + 1);',
@@ -619,6 +621,21 @@ test("tool output signing key survives a real process restart", async () => {
     '    console.log(`RESULT:${JSON.stringify(deleted)}`);',
     '    return;',
     '  }',
+    '  if (process.env.PHASE === "clear") {',
+    '    const cleared = await handlers.get("netcatty:tempdir:clear")();',
+    '    const status = await handlers.get("netcatty:tempdir:toolOutputPersistenceStatus")();',
+    '    console.log(`RESULT:${JSON.stringify({ cleared, status })}`);',
+    '    return;',
+    '  }',
+    '  if (process.env.PHASE === "unlock") {',
+    '    const locked = await handlers.get("netcatty:tempdir:toolOutputPersistenceStatus")();',
+    '    keychainLocked = false;',
+    '    const unlocked = await handlers.get("netcatty:tempdir:toolOutputPersistenceStatus")();',
+    '    const restored = await handlers.get("netcatty:tempdir:toolOutputRestore")({}, { handleId: "real-restart", chatSessionId: "restart-chat" });',
+    '    const content = restored ? await handlers.get("netcatty:tempdir:toolOutputRead")({}, { path: restored.path }) : null;',
+    '    console.log(`RESULT:${JSON.stringify({ locked, unlocked, content })}`);',
+    '    return;',
+    '  }',
     '  const restored = await handlers.get("netcatty:tempdir:toolOutputRestore")({}, { handleId: "real-restart", chatSessionId: "restart-chat" });',
     '  const content = restored ? await handlers.get("netcatty:tempdir:toolOutputRead")({}, { path: restored.path }) : null;',
     '  await bridge.cleanupExpiredToolOutputFiles();',
@@ -645,7 +662,13 @@ test("tool output signing key survives a real process restart", async () => {
     assert.equal(reopened.status, 0, reopened.stderr || reopened.stdout);
     assert.match(reopened.stdout, /RESULT:.*"restored":true.*"content":"across restart"/);
 
+    const unlocked = run("unlock", "stable-secret");
+    assert.equal(unlocked.status, 0, unlocked.stderr || unlocked.stdout);
+    assert.match(unlocked.stdout, /RESULT:.*"locked":\{"durable":false.*"unlocked":\{"durable":true\}.*"content":"across restart"/);
+
     const persistedDir = path.join(root, "Netcatty");
+    const signingKeyPath = path.join(persistedDir, ".tool-output-signing-key");
+    const signingKeyBeforeFailure = await fs.promises.readFile(signingKeyPath);
     const old = new Date(Date.now() - 31 * 60 * 1_000);
     for (const file of await fs.promises.readdir(persistedDir)) {
       if (file.endsWith(".log") || file.endsWith(".log.meta.json")) {
@@ -655,13 +678,23 @@ test("tool output signing key survives a real process restart", async () => {
     const wrongKey = run("read", "different-secret");
     assert.equal(wrongKey.status, 0, wrongKey.stderr || wrongKey.stdout);
     assert.match(wrongKey.stdout, /RESULT:\{"restored":false,"content":null\}/);
+    assert.deepEqual(await fs.promises.readFile(signingKeyPath), signingKeyBeforeFailure);
     const remainingFiles = await fs.promises.readdir(persistedDir);
-    assert.equal(remainingFiles.some(file => file.endsWith(".log")), false);
-    assert.equal(remainingFiles.some(file => file.endsWith(".log.meta.json")), false);
+    assert.equal(remainingFiles.filter(file => file.endsWith(".log")).length, 2);
+    assert.equal(remainingFiles.filter(file => file.endsWith(".log.meta.json")).length, 2);
 
-    const recoveredWrite = run("write", "different-secret");
-    assert.equal(recoveredWrite.status, 0, recoveredWrite.stderr || recoveredWrite.stdout);
-    assert.match(recoveredWrite.stdout, /RESULT:.*"ok":true/);
+    const recoveredRead = run("read", "stable-secret");
+    assert.equal(recoveredRead.status, 0, recoveredRead.stderr || recoveredRead.stdout);
+    assert.match(recoveredRead.stdout, /RESULT:.*"restored":true.*"content":"across restart"/);
+
+    const reset = run("clear", "different-secret");
+    assert.equal(reset.status, 0, reset.stderr || reset.stdout);
+    assert.match(reset.stdout, /RESULT:.*"status":\{"durable":true\}/);
+    assert.notDeepEqual(await fs.promises.readFile(signingKeyPath), signingKeyBeforeFailure);
+
+    const rewritten = run("write", "different-secret");
+    assert.equal(rewritten.status, 0, rewritten.stderr || rewritten.stdout);
+    assert.match(rewritten.stdout, /RESULT:.*"ok":true/);
 
     const deletedTerminal = run("delete-terminal", "different-secret");
     assert.equal(deletedTerminal.status, 0, deletedTerminal.stderr || deletedTerminal.stdout);
