@@ -49,6 +49,7 @@ import { terminalAltKeyOptions } from "./altKeyOptions";
 import { optionArrowWordJumpSequence } from "./optionArrowWordJump";
 import { watchDevicePixelRatio } from "./rendererDprWatch";
 import { shouldDeferWebglUntilVisible } from "./webglRendererPolicy";
+import { createWebglRendererController } from "./webglRendererController";
 import {
   captureMiddleClickTerminalMouseEvent,
   markMiddleClickContextMenuEvent,
@@ -482,8 +483,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   };
   term.element?.addEventListener("copy", handleNativeCopy, true);
 
-  let webglAddon: WebglAddon | null = null;
   let webglLoaded = false;
+  let runtimeDisposed = false;
   const scopedWindow = window as Window & {
     __xtermWebGLLoaded?: boolean;
     __xtermRendererPreference?: string;
@@ -493,45 +494,31 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   // (or when WebGL is disabled for this device). Panes that mount hidden defer
   // this until they first become visible — see shouldDeferWebglUntilVisible —
   // so batch-connecting many hosts doesn't spin up every WebGL context at once.
-  const loadWebglRenderer = () => {
-    if (webglLoaded || !performanceConfig.useWebGLAddon) return;
+  const repaintTerminal = () => {
+    if (runtimeDisposed || term.rows < 1) return;
     try {
-      // WebglAddon constructor only accepts `preserveDrawingBuffer?: boolean`.
-      // Passing an object here (legacy API assumption) unintentionally enables
-      // preserveDrawingBuffer and can cause sporadic glyph artifacts/ghosting.
-      webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        logger.warn("[XTerm] WebGL context loss detected, disposing addon");
-        webglAddon?.dispose();
-        webglAddon = null;
-        webglLoaded = false;
-      });
-      term.loadAddon(webglAddon);
-      webglLoaded = true;
-    } catch (webglErr) {
-      logger.warn(
-        "[XTerm] WebGL addon failed, using DOM renderer. Error:",
-        webglErr instanceof Error ? webglErr.message : webglErr,
-      );
+      term.refresh(0, term.rows - 1);
+    } catch (err) {
+      logger.warn("[XTerm] renderer repaint failed", err);
     }
-    scopedWindow.__xtermWebGLLoaded = webglLoaded;
   };
 
-  const suspendWebglRenderer = () => {
-    if (!webglAddon) {
-      webglLoaded = false;
-      scopedWindow.__xtermWebGLLoaded = false;
-      return;
-    }
-    try {
-      webglAddon.dispose();
-    } catch (webglErr) {
-      logger.warn("[XTerm] Failed to suspend WebGL renderer", webglErr);
-    }
-    webglAddon = null;
-    webglLoaded = false;
-    scopedWindow.__xtermWebGLLoaded = false;
-  };
+  const webglController = createWebglRendererController({
+    enabled: performanceConfig.useWebGLAddon,
+    createAddon: () => new WebglAddon(),
+    loadAddon: (addon) => term.loadAddon(addon),
+    repaint: repaintTerminal,
+    setLoaded: (loaded) => {
+      webglLoaded = loaded;
+      scopedWindow.__xtermWebGLLoaded = loaded;
+    },
+    warn: (message, error) => {
+      if (error === undefined) logger.warn(message);
+      else logger.warn(message, error);
+    },
+  });
+  const loadWebglRenderer = webglController.ensure;
+  const suspendWebglRenderer = webglController.suspend;
 
   if (!performanceConfig.useWebGLAddon) {
     logger.info(
@@ -561,6 +548,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   // the atlas forces glyphs to re-rasterize at the correct scale on the next
   // frame. No-op for the DOM renderer.
   const clearWebglTextureAtlas = () => {
+    const webglAddon = webglController.getAddon();
     if (!webglAddon) return;
     try {
       webglAddon.clearTextureAtlas();
@@ -1496,6 +1484,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ensureWebglRenderer: loadWebglRenderer,
     suspendWebglRenderer,
     dispose: () => {
+      runtimeDisposed = true;
+      webglController.dispose();
       term.element?.removeEventListener("copy", handleNativeCopy, true);
       ctx.container.removeEventListener(
         "wheel",
@@ -1546,11 +1536,6 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         searchAddon.dispose();
       } catch (err) {
         logger.warn("[XTerm] searchAddon dispose failed", err);
-      }
-      try {
-        webglAddon?.dispose();
-      } catch (err) {
-        logger.warn("[XTerm] webglAddon dispose failed", err);
       }
     },
     get currentCwd() {
