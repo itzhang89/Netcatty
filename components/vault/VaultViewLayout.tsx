@@ -10,6 +10,7 @@ import {
   vaultHeaderSecondaryButtonClass,
 } from "./VaultPageHeader";
 import { LazyLoadBoundary } from "../ui/lazy-load-boundary";
+import { AppWordmark } from "../AppWordmark";
 
 type VaultViewLayoutContext = Record<string, any>;
 
@@ -101,14 +102,13 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
             <Tooltip delayDuration={500}>
               <TooltipTrigger asChild>
                 <button
+                  aria-label={sidebarCollapsed ? t("vault.sidebar.expand") : t("vault.sidebar.collapse")}
                   onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
                   className="flex items-center gap-2.5 hover:opacity-80 transition-opacity"
                 >
                   <AppLogo className="h-8 w-8 flex-shrink-0" />
                   {!sidebarCollapsed && (
-                    <p className="text-xl font-black italic tracking-tight text-foreground leading-none">
-                      Netcatty
-                    </p>
+                    <AppWordmark className="h-5 w-auto text-foreground" />
                   )}
                 </button>
               </TooltipTrigger>
