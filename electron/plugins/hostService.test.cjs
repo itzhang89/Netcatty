@@ -68,6 +68,37 @@ test("host service forwards the transport quota guard to the runtime supervisor"
   assert.deepEqual(guarded, { identity, message });
 });
 
+test("runtime cleanup revokes leases before awaiting companion teardown", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const service = createPluginHostService(createOptions(root));
+  context.after(() => service.manager.shutdown());
+  const events = [];
+  let releaseCompanions;
+  service.leaseStore.revokeRuntime = (runtimeId) => {
+    events.push(`revoke:${runtimeId}`);
+  };
+  service.companionSupervisor.releaseRuntime = async (runtimeId) => {
+    events.push(`release:${runtimeId}`);
+    await new Promise((resolve) => {
+      releaseCompanions = resolve;
+    });
+  };
+
+  let settled = false;
+  const cleanup = service.runtimeSupervisor.runtimeCleanup({ runtimeId: "runtime-1" })
+    .finally(() => {
+      settled = true;
+    });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(events, ["revoke:runtime-1", "release:runtime-1"]);
+  assert.equal(settled, false);
+  releaseCompanions();
+  await cleanup;
+  assert.equal(settled, true);
+});
+
 test("runtime trust placement precedes required and advanced permission prompts", async (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));

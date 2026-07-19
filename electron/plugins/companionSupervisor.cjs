@@ -431,7 +431,10 @@ class PluginCompanionSupervisor {
       handleId,
       companionId,
       pluginId: context.pluginId,
+      pluginVersion: context.pluginVersion,
       runtimeId: context.runtimeId,
+      runtimeKind: context.runtimeKind,
+      securityPrincipal: context.securityPrincipal,
       child,
       peer: null,
       quotaResourceId: `${context.runtimeId}\0companion:${handleId}`,
@@ -535,7 +538,10 @@ class PluginCompanionSupervisor {
       record.stopPromise = null;
       await this.onContainmentFailure(Object.freeze({
         pluginId: record.pluginId,
+        pluginVersion: record.pluginVersion,
         runtimeId: record.runtimeId,
+        runtimeKind: record.runtimeKind,
+        securityPrincipal: record.securityPrincipal,
       }), containmentError);
       throw containmentError;
     });
@@ -543,9 +549,16 @@ class PluginCompanionSupervisor {
   }
 
   async releaseRuntime(runtimeId) {
-    await Promise.allSettled([...this.handles.values()]
+    const results = await Promise.allSettled([...this.handles.values()]
       .filter((record) => record.runtimeId === runtimeId)
       .map((record) => this.#stopRecord(record)));
+    const failures = results
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason);
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, `Plugin companion cleanup failed for runtime: ${runtimeId}`);
+    }
   }
 
   async shutdown() {

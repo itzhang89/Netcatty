@@ -619,6 +619,75 @@ test("lazy activation waits until the previous runtime has fully stopped", async
   assert.notEqual(secondIdentity.runtimeId, firstIdentity.runtimeId);
 });
 
+test("runtime stop waits for companion cleanup before it resolves", async (context) => {
+  const events = [];
+  let markCleanupEntered;
+  let releaseCleanup;
+  const cleanupEntered = new Promise((resolve) => { markCleanupEntered = resolve; });
+  const cleanupReleased = new Promise((resolve) => { releaseCleanup = resolve; });
+  const fixture = createFixture(context, () => ({
+    async start(config) {
+      return {
+        pluginId: config.pluginId,
+        pluginVersion: config.pluginVersion,
+        apiVersion: config.apiVersion,
+        enabledFeatures: config.enabledFeatures,
+      };
+    },
+    async stop() { events.push("runtime-stop"); },
+  }), {
+    async runtimeCleanup(identity) {
+      events.push(`cleanup:${identity.runtimeId}`);
+      markCleanupEntered(identity);
+      await cleanupReleased;
+    },
+  });
+  const identity = await fixture.supervisor.start(fixture.manifest.id);
+  let settled = false;
+  const stopping = fixture.supervisor.stop(fixture.manifest.id).finally(() => { settled = true; });
+  const cleanupIdentity = await cleanupEntered;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  assert.deepEqual(cleanupIdentity, identity);
+  assert.deepEqual(events, ["runtime-stop", `cleanup:${identity.runtimeId}`]);
+  releaseCleanup();
+  await stopping;
+  assert.equal(fixture.database.getActivePlugin(fixture.manifest.id).runtime.status, "stopped");
+});
+
+test("companion cleanup containment failure is persisted and blocks restart", async (context) => {
+  const fixture = createFixture(context, () => ({
+    async start(config) {
+      return {
+        pluginId: config.pluginId,
+        pluginVersion: config.pluginVersion,
+        apiVersion: config.apiVersion,
+        enabledFeatures: config.enabledFeatures,
+      };
+    },
+    async stop() {},
+  }), {
+    async runtimeCleanup() { throw new Error("companion process tree survived"); },
+  });
+  await fixture.supervisor.start(fixture.manifest.id);
+
+  await assert.rejects(
+    fixture.supervisor.stop(fixture.manifest.id),
+    /companion process tree survived/,
+  );
+  const plugin = fixture.database.getActivePlugin(fixture.manifest.id);
+  assert.equal(plugin.enabled, false);
+  assert.equal(plugin.runtime.status, "quarantined");
+  assert.match(plugin.runtime.lastError, /companion process tree survived/);
+  assert.notEqual(plugin.runtime.quarantinedAt, null);
+  fixture.database.setEnabled(fixture.manifest.id, true);
+  fixture.database.clearQuarantine(fixture.manifest.id);
+  await assert.rejects(
+    fixture.supervisor.start(fixture.manifest.id),
+    /restart Netcatty before starting it again/,
+  );
+});
+
 test("containment failure disables the plugin and blocks replacement activation until restart", async (context) => {
   let factoryCalls = 0;
   const fixture = createFixture(context, () => {

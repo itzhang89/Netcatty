@@ -371,6 +371,33 @@ test("uninstall disables lazy activation before stopping and removing code", asy
   ]);
 });
 
+test("uninstall never removes package code when runtime cleanup fails", async () => {
+  let uninstallCalls = 0;
+  const pluginId = "com.example.contained";
+  const manager = new PluginManager({
+    database: {
+      close() {},
+      getActivePlugin: () => ({ id: pluginId, enabled: true }),
+      listPlugins: () => [],
+      setEnabled() {},
+    },
+    packageStore: {
+      async initialize() {},
+      async uninstall() {
+        uninstallCalls += 1;
+        return true;
+      },
+    },
+    runtimeSupervisor: {
+      async startEnabled() {},
+      async stop() { throw new Error("companion cleanup failed"); },
+    },
+  });
+
+  await assert.rejects(manager.uninstall(pluginId), /companion cleanup failed/);
+  assert.equal(uninstallCalls, 0);
+});
+
 test("concurrent shutdown callers share one complete shutdown operation", async () => {
   let databaseCloses = 0;
   let supervisorShutdowns = 0;

@@ -24,7 +24,10 @@ function assertAbsolutePath(value) {
   ) {
     throw invalidArgument("Plugin filesystem path must be absolute");
   }
-  return path.normalize(value);
+  // Resolve absolute paths lexically so permission resources have one stable
+  // spelling. In particular, realpath() drops trailing separators, and the
+  // post-permission equality checks must compare against the same spelling.
+  return path.resolve(value);
 }
 
 function assertReadParams(params) {

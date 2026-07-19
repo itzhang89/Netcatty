@@ -28,6 +28,8 @@ function runtimeContext(packageRoot, digest, overrides = {}) {
     pluginId: "com.example.companion",
     pluginVersion: "1.0.0",
     runtimeId: "runtime-1",
+    runtimeKind: "utility",
+    securityPrincipal: "unsigned-package:test",
     packageRoot,
     manifest: {
       companionExecutables: [{
@@ -189,6 +191,40 @@ test("companion runs shell-free with sanitized environment and bounded host-only
   await supervisor.shutdown();
 });
 
+test("companion cleanup reports the complete runtime identity and rejects containment failure", async (context) => {
+  const root = createRoot(context);
+  const packageRoot = path.join(root, "package");
+  const executable = path.join(packageRoot, "bin/helper");
+  await fsp.mkdir(path.dirname(executable), { recursive: true });
+  const contents = Buffer.from("binary");
+  await fsp.writeFile(executable, contents);
+  const digest = createHash("sha256").update(contents).digest("hex");
+  const contract = await import("@netcatty/plugin-contract");
+  const failures = [];
+  const supervisor = new PluginCompanionSupervisor({
+    paths: { data: path.join(root, "data") },
+    spawn: () => new FakeChild(contract),
+    terminateProcessTree: async () => { throw new Error("process tree survived"); },
+    onContainmentFailure: (identity, error) => failures.push({ identity, error }),
+  });
+  const runtime = runtimeContext(packageRoot, digest);
+  await supervisor.start({ companionId: "com.example.companion.helper" }, runtime);
+
+  await assert.rejects(
+    supervisor.releaseRuntime(runtime.runtimeId),
+    (error) => error.code === RPC_ERRORS.failedPrecondition,
+  );
+  assert.deepEqual(failures.map(({ identity }) => identity), [{
+    pluginId: runtime.pluginId,
+    pluginVersion: runtime.pluginVersion,
+    runtimeId: runtime.runtimeId,
+    runtimeKind: runtime.runtimeKind,
+    securityPrincipal: runtime.securityPrincipal,
+  }]);
+  assert.match(failures[0].error.message, /could not be reaped/);
+  await supervisor.shutdown();
+});
+
 test("Windows companion termination uses shell-free tree cleanup for both stages", async () => {
   const calls = [];
   await terminateCompanionProcessTree({
@@ -232,7 +268,10 @@ test("companion stop reaps its POSIX descendant process group", {
   const runtime = runtimeContext(packageRoot, digest);
   const handle = await supervisor.start({ companionId: "com.example.companion.helper" }, runtime);
   let descendantPid;
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  // The complete plugin suite runs many test files in parallel, so process
+  // scheduling can exceed one second on a busy CI host. Treat the PID file as
+  // the explicit readiness barrier and keep a bounded ten-second deadline.
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
     try {
       descendantPid = Number(await fsp.readFile(pidFile, "utf8"));
       break;

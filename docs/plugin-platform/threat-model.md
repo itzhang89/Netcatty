@@ -232,7 +232,7 @@ semantics. A new principal or changed required/resource declaration requires a
 new decision.
 
 Network access is origin-scoped, cookie-free and redirect-by-redirect. File
-access authorizes a normalized absolute request without probing the filesystem,
+access authorizes a lexically resolved absolute request without probing the filesystem,
 then resolves it after permission and requires the caller to have supplied that
 canonical real path. Opened reads are bound to the authorized pre-open inode and
 the current path inode. Arbitrary-path creation is denied until a portable
@@ -241,7 +241,8 @@ remains available without exposing a parent-symlink creation race.
 Companion executables are package-contained, digest-verified immediately before
 shell-free spawn, host-RPC clients only, and their complete process group/tree
 must be reaped before their handle is released. Failure to contain a companion
-disables its plugin.
+disables its plugin, persists the containment error, and prevents package
+mutation or replacement activation until containment is restored.
 
 Secret plaintext is encrypted by Electron `safeStorage` and never returned by
 ordinary secret RPC. A credential consumer must redeem a one-use lease bound to

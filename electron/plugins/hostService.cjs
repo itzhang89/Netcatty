@@ -159,16 +159,15 @@ function createPluginHostService(options) {
       resolveSecurityPrincipal: options.resolveSecurityPrincipal,
       runtimeMessageGuard,
       runtimeResourceMonitor: quotaManager,
+      runtimeCleanup: async (identity) => {
+        leaseStore.revokeRuntime(identity.runtimeId);
+        await companionSupervisor.releaseRuntime(identity.runtimeId);
+      },
       utilityModuleMappings: options.utilityModuleMappings ?? createUtilityModuleMappings(moduleResources),
     });
     quotaManager.setViolationHandler((identity, error) => (
       runtimeSupervisor.enforcePolicyViolation(identity, error)
     ));
-    runtimeSupervisor.onDidChangeRuntime((event) => {
-      if (!event.runtimeId || event.status === "running" || event.status === "starting") return;
-      leaseStore.revokeRuntime(event.runtimeId);
-      void companionSupervisor.releaseRuntime(event.runtimeId);
-    });
     const manager = new PluginManager({
       database,
       packageStore,

@@ -91,8 +91,9 @@ replay POST bodies as GET requests.
 ### Filesystem
 
 Read, write, stat and directory listing require an absolute path. Authorization
-first uses only the normalized requested path, so an ungranted request cannot
-probe path existence, type, symlink targets or real paths. After permission,
+first uses only the lexically resolved requested path, including removal of
+redundant trailing separators, so an ungranted request cannot probe path
+existence, type, symlink targets or real paths. After permission,
 the handler resolves the real path and requires it to equal the authorized
 resource; callers must therefore supply an already canonical path and symlink
 aliases fail closed. File opens use `O_NOFOLLOW` where supported and bind the
@@ -146,7 +147,9 @@ exists. Windows uses shell-free `taskkill /T` for both graceful and forced tree
 cleanup. A direct parent exit also starts tree cleanup before the handle or
 quota monitor is released. An unreaped companion tree is a containment failure
 and disables its plugin. Runtime stop events revoke leases and release all owned
-companion handles.
+companion handles. Disable, restart, upgrade and uninstall wait for that tree
+cleanup before returning or mutating package code; a cleanup failure is
+persisted as a containment failure and blocks replacement activation.
 
 ## Quotas and failure behavior
 

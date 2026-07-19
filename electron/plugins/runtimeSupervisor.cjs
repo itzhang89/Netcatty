@@ -83,6 +83,10 @@ class RuntimeSupervisor {
       utility: (runtimeOptions) => new UtilityPluginRuntime(runtimeOptions),
     };
     this.runtimeResourceMonitor = options.runtimeResourceMonitor ?? null;
+    this.runtimeCleanup = options.runtimeCleanup ?? null;
+    if (this.runtimeCleanup != null && typeof this.runtimeCleanup !== "function") {
+      throw new TypeError("Plugin runtime cleanup must be a function");
+    }
     this.resourceMonitors = new Map();
     this.runtimes = new Map();
     this.runtimeIdentities = new Map();
@@ -337,16 +341,20 @@ class RuntimeSupervisor {
       return this.getRuntimeIdentity(pluginId);
     } catch (error) {
       const stillOwned = this.runtimes.get(pluginId) === runtime;
+      let stopError;
       let cleanupError;
       if (stillOwned) {
         this.runtimes.delete(pluginId);
         this.runtimeIdentities.delete(pluginId);
         this.#releaseRuntimeResources(identity);
-        try { await runtime.stop(); } catch (stopError) { cleanupError = stopError; }
+        try { await runtime.stop(); } catch (caughtError) { stopError = caughtError; }
+        try { await this.#cleanupRuntime(identity); } catch (caughtError) { cleanupError = caughtError; }
       }
-      if (stillOwned && cleanupError?.code === PLUGIN_CONTAINMENT_ERROR_CODE) {
-        this.#recordContainmentFailure(identity, cleanupError);
-        throw cleanupError;
+      const containmentError = cleanupError
+        ?? (stopError?.code === PLUGIN_CONTAINMENT_ERROR_CODE ? stopError : null);
+      if (stillOwned && containmentError) {
+        this.#recordContainmentFailure(identity, containmentError);
+        throw containmentError;
       }
       if (stillOwned) await this.#recordFailure(identity, error);
       throw error;
@@ -389,6 +397,12 @@ class RuntimeSupervisor {
     this.runtimes.delete(pluginId);
     this.runtimeIdentities.delete(pluginId);
     this.#releaseRuntimeResources(identity);
+    try {
+      await this.#cleanupRuntime(identity);
+    } catch (error) {
+      this.#recordContainmentFailure(identity, error);
+      return;
+    }
     if (details.containmentFailed) {
       this.#recordContainmentFailure(identity, details.error);
       return;
@@ -453,13 +467,21 @@ class RuntimeSupervisor {
     this.runtimeIdentities.delete(pluginId);
     this.#releaseRuntimeResources(identity);
     let stopError;
+    let cleanupError;
     try {
       await runtime.stop();
     } catch (error) {
       stopError = error;
+    }
+    try {
+      await this.#cleanupRuntime(identity);
+    } catch (error) {
+      cleanupError = error;
     } finally {
-      if (stopError?.code === PLUGIN_CONTAINMENT_ERROR_CODE) {
-        this.#recordContainmentFailure(identity, stopError);
+      const containmentError = cleanupError
+        ?? (stopError?.code === PLUGIN_CONTAINMENT_ERROR_CODE ? stopError : null);
+      if (containmentError) {
+        this.#recordContainmentFailure(identity, containmentError);
       } else {
         this.#setRuntimeState(identity, "stopped", {
           kind: plugin?.runtime?.kind,
@@ -467,6 +489,7 @@ class RuntimeSupervisor {
         });
       }
     }
+    if (cleanupError) throw cleanupError;
     if (stopError?.code === PLUGIN_CONTAINMENT_ERROR_CODE) throw stopError;
   }
 
@@ -481,6 +504,17 @@ class RuntimeSupervisor {
     this.resourceMonitors.get(identity.runtimeId)?.dispose?.();
     this.resourceMonitors.delete(identity.runtimeId);
     this.runtimeResourceMonitor?.releaseRuntime?.(identity.runtimeId);
+  }
+
+  async #cleanupRuntime(identity) {
+    if (!identity || !this.runtimeCleanup) return;
+    await this.runtimeCleanup(Object.freeze({
+      pluginId: identity.pluginId,
+      pluginVersion: identity.pluginVersion,
+      runtimeId: identity.runtimeId,
+      runtimeKind: identity.runtimeKind,
+      securityPrincipal: identity.securityPrincipal,
+    }));
   }
 
   #installRuntimeResourceMonitor(identity, runtime) {

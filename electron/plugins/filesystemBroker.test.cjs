@@ -79,6 +79,26 @@ test("filesystem broker uses canonical authorization for bounded read, write, st
   ]);
 });
 
+test("filesystem authorization removes trailing directory separators before permission", async (context) => {
+  const root = createRoot(context);
+  const requestedPath = `${root}${path.sep}`;
+  await fsp.writeFile(path.join(root, "entry.txt"), "entry");
+  const broker = new PluginFilesystemBroker();
+  const statAuthorization = broker.describeReadAuthorization({ path: requestedPath }, "exact");
+  const listAuthorization = broker.describeReadAuthorization({ path: requestedPath }, "directory");
+
+  assert.deepEqual(statAuthorization.resources, [root]);
+  assert.deepEqual(listAuthorization.resources, [root]);
+  assert.equal(
+    (await broker.stat({ path: requestedPath }, runtimeContext(statAuthorization))).kind,
+    "directory",
+  );
+  assert.deepEqual(
+    (await broker.readDirectory({ path: requestedPath }, runtimeContext(listAuthorization))).entries,
+    [{ name: "entry.txt", kind: "file" }],
+  );
+});
+
 test("filesystem write quota is enforced before mutating the target", async (context) => {
   const root = createRoot(context);
   const target = path.join(root, "target.txt");
