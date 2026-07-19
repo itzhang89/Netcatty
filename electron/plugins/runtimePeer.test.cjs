@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { MessageChannel } = require("node:worker_threads");
 
-const { PluginRpcRouter } = require("./rpcRouter.cjs");
+const { PluginRpcError, PluginRpcRouter, RPC_ERRORS } = require("./rpcRouter.cjs");
 
 test("runtime peer exposes secure host capabilities over the canonical RPC transport", async () => {
   const { startPluginRuntime } = await import("./runtime/runtimePeer.mjs");
@@ -16,6 +16,9 @@ test("runtime peer exposes secure host capabilities over the canonical RPC trans
     pluginId: "com.example.peer",
     send(message) { port1.postMessage(message); },
     handlers: {
+      "storage.get": async () => {
+        throw new PluginRpcError(RPC_ERRORS.invalidArgument, "Invalid storage key");
+      },
       "storage.set": async ({ key, value }) => { values.set(key, value); return null; },
       "secrets.set": async ({ key, value }) => {
         calls.push(["secret", key, value]);
@@ -71,6 +74,11 @@ test("runtime peer exposes secure host capabilities over the canonical RPC trans
         default: {
           async activate(context) {
             lifecycle.push("activate");
+            await assert.rejects(
+              context.storage.get("invalid"),
+              (error) => error?.code === "invalid_argument"
+                && error?.message === "Invalid storage key",
+            );
             await context.storage.set("answer", 42);
             const secret = await context.secrets.set("api-key", "value");
             const lease = await context.credentials.createLease(secret, {

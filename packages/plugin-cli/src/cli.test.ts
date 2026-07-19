@@ -217,6 +217,32 @@ test("manifest validation reports permission and contribution mistakes", () => {
   assert.match(result.errors.join("\n"), /undeclared command/);
 });
 
+test("manifest validation applies the runtime resource limit for each permission", () => {
+  for (const [permission, length, expectedLimit] of [
+    ["network", 2_049, 2_048],
+    ["storage", 2_049, 2_048],
+    ["companion.execute", 193, 192],
+  ] as const) {
+    const result = validateManifestValue(manifest({
+      permissions: {
+        required: [{ permission, resources: ["x".repeat(length)] }],
+      },
+    }));
+    assert.equal(result.valid, false);
+    assert.match(
+      result.errors.join("\n"),
+      new RegExp(`Permission resource for ${permission.replace(".", "\\.")} exceeds ${expectedLimit}`),
+    );
+  }
+
+  const filesystem = validateManifestValue(manifest({
+    permissions: {
+      required: [{ permission: "filesystem.read", resources: [`/${"x".repeat(4_096)}`] }],
+    },
+  }));
+  assert.equal(filesystem.valid, true, filesystem.errors.join("\n"));
+});
+
 test("Node utility entrypoints require the explicit advanced-runtime permission", () => {
   const missing = validateManifestValue(manifest({
     main: { node: "dist/index.js" },

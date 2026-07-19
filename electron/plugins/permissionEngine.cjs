@@ -558,6 +558,11 @@ class PluginPermissionEngine {
       await this.authorize(context, {
         permission: declaration.permission,
         resources: declaration.resources.length ? declaration.resources : ["*"],
+        ...(declaration.resources.length
+          && (declaration.permission === "filesystem.read"
+            || declaration.permission === "filesystem.write")
+          ? { resourceKinds: declaration.resources.map(() => "directory") }
+          : {}),
         reason: declaration.reason || `Required by ${plugin.id}`,
         operationId: `activation:${plugin.activeVersion}`,
       });

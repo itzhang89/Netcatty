@@ -328,6 +328,46 @@ test("filesystem reads reject a replacement inode opened after authorization", a
   );
 });
 
+test("filesystem writes reject a replacement inode opened after authorization", async (context) => {
+  const root = createRoot(context);
+  const target = path.join(root, "selected.txt");
+  const original = path.join(root, "original.txt");
+  const replacement = path.join(root, "replacement.txt");
+  await Promise.all([
+    fsp.writeFile(target, "allowed"),
+    fsp.writeFile(replacement, "secret"),
+  ]);
+  let swapped = false;
+  const broker = new PluginFilesystemBroker({
+    fileSystem: {
+      ...fsp,
+      async open(filePath, flags, mode) {
+        if (!swapped) {
+          swapped = true;
+          await fsp.rename(target, original);
+          await fsp.rename(replacement, target);
+        }
+        return fsp.open(filePath, flags, mode);
+      },
+    },
+  });
+  const authorization = broker.describeWriteAuthorization({
+    path: target,
+    data: "overwritten",
+    overwrite: true,
+  });
+  await assert.rejects(
+    broker.writeFile({
+      path: target,
+      data: "overwritten",
+      overwrite: true,
+    }, runtimeContext(authorization)),
+    (error) => error.code === RPC_ERRORS.permissionDenied,
+  );
+  assert.equal(await fsp.readFile(original, "utf8"), "allowed");
+  assert.equal(await fsp.readFile(target, "utf8"), "secret");
+});
+
 test("filesystem broker rejects oversized and non-canonical payloads", async (context) => {
   const root = createRoot(context);
   const target = path.join(root, "target.bin");

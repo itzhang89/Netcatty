@@ -134,6 +134,31 @@ function permissionName(declaration: PermissionDeclaration): PluginPermission {
   return typeof declaration === "string" ? declaration : declaration.permission;
 }
 
+function permissionResourceLimit(permission: PluginPermission): number {
+  if (permission === "filesystem.read" || permission === "filesystem.write") return 8_192;
+  if (permission === "companion.execute") return 192;
+  return 2_048;
+}
+
+function validatePermissionResourceLimits(manifest: PluginManifest): string[] {
+  const errors: string[] = [];
+  for (const declaration of [
+    ...(manifest.permissions?.required ?? []),
+    ...(manifest.permissions?.optional ?? []),
+  ]) {
+    if (typeof declaration === "string") continue;
+    const maximum = permissionResourceLimit(declaration.permission);
+    for (const resource of declaration.resources) {
+      if (resource.length > maximum) {
+        errors.push(
+          `Permission resource for ${declaration.permission} exceeds ${maximum} characters`,
+        );
+      }
+    }
+  }
+  return errors;
+}
+
 function findDuplicateIds(manifest: PluginManifest): string[] {
   const errors: string[] = [];
   const groups = [
@@ -185,6 +210,7 @@ function validateSemantics(manifest: PluginManifest): string[] {
   const errors = [
     ...findDuplicateIds(manifest),
     ...validateOwnedContributionIds(manifest),
+    ...validatePermissionResourceLimits(manifest),
   ];
   for (const [engine, range] of Object.entries(manifest.engines)) {
     if (validRange(range) === null) {

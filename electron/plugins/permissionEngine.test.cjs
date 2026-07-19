@@ -470,6 +470,41 @@ test("required preflight grants non-resource permissions but defers concrete res
   database.close();
 });
 
+test("required filesystem preflight preserves declared directory scope", async (context) => {
+  const database = createDatabase(context);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-required-directory-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const child = path.join(root, "child.txt");
+  let prompts = 0;
+  const requests = [];
+  const engine = new PluginPermissionEngine({
+    database,
+    requestDecision: async (request) => {
+      prompts += 1;
+      requests.push(request);
+      return { requestId: request.requestId, decision: "allow", scope: "application" };
+    },
+  });
+  const pluginManifest = manifest({ required: [{
+    permission: "filesystem.read",
+    resources: [root],
+  }] });
+  await engine.authorizeRequired({
+    id: pluginManifest.id,
+    activeVersion: pluginManifest.version,
+    manifest: pluginManifest,
+  });
+  assert.deepEqual(requests[0].resourceKinds, ["directory"]);
+  await engine.authorize(runtimeContext(pluginManifest), {
+    permission: "filesystem.read",
+    resources: [child],
+    resourceKinds: ["exact"],
+    reason: "Read declared descendant",
+  });
+  assert.equal(prompts, 1);
+  database.close();
+});
+
 test("permission middleware rejects unclassified methods and permits explicit public methods", async (context) => {
   const database = createDatabase(context);
   const engine = new PluginPermissionEngine({ database });

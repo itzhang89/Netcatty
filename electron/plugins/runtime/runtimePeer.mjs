@@ -2,6 +2,7 @@ import {
   CancellationTokenSource,
   DisposableStore,
   PluginError,
+  PLUGIN_ERROR_WIRE_CODES,
   pluginErrorToRpcError,
 } from "@netcatty/plugin-sdk";
 import { createMessagePortStreamEnvelope } from "@netcatty/plugin-contract";
@@ -13,6 +14,18 @@ const RPC_ERRORS = {
   cancelled: -32001,
   unsupported: -32012,
 };
+
+const PLUGIN_ERROR_NAMES_BY_WIRE_CODE = new Map(
+  Object.entries(PLUGIN_ERROR_WIRE_CODES).map(([name, code]) => [code, name]),
+);
+
+function pluginErrorNameFromRpcError(error) {
+  if (typeof error?.data?.pluginCode === "string") return error.data.pluginCode;
+  if (error?.code === RPC_ERRORS.methodNotFound) return "unsupported";
+  if (error?.code === RPC_ERRORS.invalidParams) return "invalid_argument";
+  if (error?.code === RPC_ERRORS.internal) return "internal";
+  return PLUGIN_ERROR_NAMES_BY_WIRE_CODE.get(error?.code) ?? "unknown";
+}
 
 function messageData(value) {
   return value && typeof value === "object" && "data" in value ? value.data : value;
@@ -90,7 +103,7 @@ function createHostClient(transport) {
     pending.delete(`${typeof message.id}:${String(message.id)}`);
     if (message.error) {
       request.reject(new PluginError(
-        message.error.data?.pluginCode ?? "unknown",
+        pluginErrorNameFromRpcError(message.error),
         message.error.message,
         message.error.data?.details,
       ));

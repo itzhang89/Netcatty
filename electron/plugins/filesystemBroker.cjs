@@ -106,7 +106,7 @@ async function resolveWritePath(requestedPath, fileSystem = fsp) {
   try {
     const existing = await resolveExistingPath(requestedPath, fileSystem);
     if (!existing.stats.isFile()) throw invalidArgument("Plugin filesystem write target is not a file");
-    return existing.canonical;
+    return existing;
   } catch (error) {
     if (error?.code === "ENOENT") {
       throw new PluginRpcError(
@@ -264,7 +264,7 @@ class PluginFilesystemBroker {
   async writeFile(params, context) {
     const value = assertSecureWriteMode(assertWriteParams(params));
     assertAuthorizedPath(context, "filesystem.write", value.path);
-    const canonical = await resolveWritePath(value.path, this.fileSystem);
+    const { canonical, stats } = await resolveWritePath(value.path, this.fileSystem);
     assertAuthorizedPath(context, "filesystem.write", canonical);
     this.quotaManager?.chargeBytes(context.runtimeId, "filesystem", value.bytes.byteLength);
     await context.assertActive();
@@ -276,6 +276,7 @@ class PluginFilesystemBroker {
         handle.stat(),
         this.fileSystem.stat(canonical),
       ]);
+      assertSameOpenedFile(openedStats, stats);
       assertSameOpenedFile(openedStats, pathStats);
       await context.assertActive();
       if (value.overwrite) await handle.truncate(0);
