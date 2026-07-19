@@ -31,7 +31,7 @@ test("secret mutations recheck runtime activity immediately before commit", asyn
   const requests = createRegistrations({
     set(_pluginId, _key, _value) {
       events.push("set");
-      return { kind: "secret", id: "secret-reference-0000000000000000" };
+      return { kind: "secret", id: "secret-reference-0000000000000000", key: "api-key" };
     },
     delete() { events.push("delete"); },
     getReference() { return null; },

@@ -73,7 +73,10 @@ function createPluginHostService(options) {
       leaseStore,
       credentialResolver: options.credentialResolver,
     });
-    const filesystemBroker = new PluginFilesystemBroker({ quotaManager });
+    const filesystemBroker = new PluginFilesystemBroker({
+      quotaManager,
+      openDirectoryHandle: options.openPluginDirectoryHandle,
+    });
     const networkBroker = new PluginNetworkBroker({
       fetch: options.fetch ?? (options.electron.net?.fetch
         ? (...args) => options.electron.net.fetch(...args)

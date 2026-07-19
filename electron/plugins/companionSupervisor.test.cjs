@@ -158,12 +158,18 @@ test("companion runs shell-free with sanitized environment and bounded host-only
   const digest = createHash("sha256").update(contents).digest("hex");
   const contract = await import("@netcatty/plugin-contract");
   const spawns = [];
+  const tracked = [];
   const supervisor = new PluginCompanionSupervisor({
     paths: { data: path.join(root, "data") },
     spawn: (command, args, options) => {
       const child = new FakeChild(contract);
       spawns.push({ command, args, options, child });
       return child;
+    },
+    quotaManager: {
+      trackProcess: (resourceId, identity) => tracked.push({ resourceId, identity }),
+      releaseProcess() {},
+      chargeBytes() {},
     },
   });
   const runtime = runtimeContext(packageRoot, digest);
@@ -173,6 +179,16 @@ test("companion runs shell-free with sanitized environment and bounded host-only
   assert.equal(spawns[0].options.shell, false);
   assert.equal(spawns[0].options.detached, process.platform !== "win32");
   assert.deepEqual(Object.keys(spawns[0].options.env).sort(), ["LANG", "LC_ALL"]);
+  assert.deepEqual(tracked, [{
+    resourceId: `${runtime.runtimeId}\0companion:${handle.handleId}`,
+    identity: {
+      pluginId: runtime.pluginId,
+      pluginVersion: runtime.pluginVersion,
+      runtimeId: runtime.runtimeId,
+      runtimeKind: runtime.runtimeKind,
+      securityPrincipal: runtime.securityPrincipal,
+    },
+  }]);
 
   assert.deepEqual(await supervisor.request({
     handleId: handle.handleId,

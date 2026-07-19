@@ -362,12 +362,18 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
   assert.equal(permissionDecision({ requestId: "p1", decision: "allow", scope: "once" }), true);
   assert.equal(permissionDecision({ requestId: "p1", decision: "allow" }), false);
   assert.equal(permissionDecision({ requestId: "p1", decision: "deny", scope: "always" }), false);
-  assert.equal(secretRef({ kind: "secret", id: "secret-reference-1" }), true);
-  assert.equal(secretRef({ kind: "secret", id: "short" }), false);
-  assert.equal(secretRef({ kind: "secret", id: "secret-reference-1", value: "plaintext" }), false);
+  assert.equal(secretRef({ kind: "secret", id: "secret-reference-1", key: "api-key" }), true);
+  assert.equal(secretRef({ kind: "secret", id: "secret-reference-1" }), false);
+  assert.equal(secretRef({ kind: "secret", id: "short", key: "api-key" }), false);
+  assert.equal(secretRef({
+    kind: "secret",
+    id: "secret-reference-1",
+    key: "api-key",
+    value: "plaintext",
+  }), false);
   assert.equal(secretRef({ kind: "credential", id: "secret-reference-1" }), false);
   assert.equal(credentialRef({ kind: "credential", id: "credential-ref-1" }), true);
-  assert.equal(credentialRef({ kind: "secret", id: "credential-ref-1" }), false);
+  assert.equal(credentialRef({ kind: "secret", id: "credential-ref-1", key: "api-key" }), false);
   assert.equal(provider({
     providerId: "com.example.contract-test.completion",
     operation: "provideCompletions",

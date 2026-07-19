@@ -24,6 +24,19 @@ function runtimeContext(authorization) {
   };
 }
 
+async function openTestDirectoryHandle(directoryPath) {
+  const stats = await fsp.stat(directoryPath);
+  const directory = await fsp.opendir(directoryPath);
+  return {
+    stat: async () => stats,
+    read: () => directory.read(),
+    close: async () => {
+      try { await directory.close(); }
+      catch (error) { if (error?.code !== "ERR_DIR_CLOSED") throw error; }
+    },
+  };
+}
+
 test("filesystem broker uses canonical authorization for bounded read, write, stat, and list", async (context) => {
   const root = createRoot(context);
   const source = path.join(root, "source.txt");
@@ -35,6 +48,7 @@ test("filesystem broker uses canonical authorization for bounded read, write, st
   const charges = [];
   const broker = new PluginFilesystemBroker({
     quotaManager: { chargeBytes: (...args) => charges.push(args) },
+    openDirectoryHandle: openTestDirectoryHandle,
   });
 
   const readAuthorization = await broker.describeReadAuthorization({ path: source });
@@ -83,7 +97,7 @@ test("filesystem authorization removes trailing directory separators before perm
   const root = createRoot(context);
   const requestedPath = `${root}${path.sep}`;
   await fsp.writeFile(path.join(root, "entry.txt"), "entry");
-  const broker = new PluginFilesystemBroker();
+  const broker = new PluginFilesystemBroker({ openDirectoryHandle: openTestDirectoryHandle });
   const statAuthorization = broker.describeReadAuthorization({ path: requestedPath }, "exact");
   const listAuthorization = broker.describeReadAuthorization({ path: requestedPath }, "directory");
 
@@ -224,22 +238,30 @@ test("filesystem directory replacement between authorization and open fails clos
   ]);
   let swapped = false;
   const broker = new PluginFilesystemBroker({
-    fileSystem: {
-      ...fsp,
-      async opendir(directoryPath, options) {
-        if (!swapped) {
-          swapped = true;
-          await fsp.rename(selected, original);
-          await fsp.rename(replacement, selected);
-        }
-        return fsp.opendir(directoryPath, options);
-      },
+    openDirectoryHandle: async (directoryPath) => {
+      if (!swapped) {
+        swapped = true;
+        await fsp.rename(selected, original);
+        await fsp.rename(replacement, selected);
+      }
+      return openTestDirectoryHandle(directoryPath);
     },
   });
   const authorization = await broker.describeReadAuthorization({ path: selected }, "directory");
   await assert.rejects(
     broker.readDirectory({ path: selected }, runtimeContext(authorization)),
     (error) => error.code === RPC_ERRORS.permissionDenied,
+  );
+});
+
+test("filesystem directory listing fails closed without a handle-bound adapter", async (context) => {
+  const root = createRoot(context);
+  await fsp.writeFile(path.join(root, "entry.txt"), "entry");
+  const broker = new PluginFilesystemBroker();
+  const authorization = broker.describeReadAuthorization({ path: root }, "directory");
+  await assert.rejects(
+    broker.readDirectory({ path: root }, runtimeContext(authorization)),
+    (error) => error.code === RPC_ERRORS.unsupported,
   );
 });
 

@@ -46,6 +46,10 @@ test("plugin secrets are OS-encrypted, opaque, ownership-bound, and uninstall-in
     () => store.resolve("com.example.two", secret),
     (error) => error.code === RPC_ERRORS.notFound,
   );
+  assert.throws(
+    () => store.resolve("com.example.one", { ...secret, key: "different-key" }),
+    (error) => error.code === RPC_ERRORS.notFound,
+  );
   store.delete("com.example.one", "api-key");
   assert.equal(store.getReference("com.example.one", "api-key"), undefined);
   database.close();
@@ -231,8 +235,8 @@ test("credential authorization descriptors do not probe opaque references before
   }).resources, ["credential:unknown-credential"]);
   assert.deepEqual(broker.describeAuthorization({
     ...base,
-    secret: { kind: "secret", id: "unknown-secret-reference" },
-  }).resources, ["secret-ref:unknown-secret-reference"]);
+    secret: { kind: "secret", id: "unknown-secret-reference", key: "api-key" },
+  }).resources, ["secret:api-key"]);
   assert.equal(credentialChecks, 0);
   assert.equal(secretChecks, 0);
 
@@ -249,7 +253,7 @@ test("credential authorization descriptors do not probe opaque references before
   assert.equal(credentialChecks, 1);
   await assert.rejects(broker.createLease({
     ...base,
-    secret: { kind: "secret", id: "unknown-secret-reference" },
+    secret: { kind: "secret", id: "unknown-secret-reference", key: "api-key" },
   }, runtime), /unknown plugin secret/);
   assert.equal(secretChecks, 1);
 });

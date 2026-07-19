@@ -126,11 +126,12 @@
       "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z0-9][a-z0-9_-]*)+$"
     },
     "SecretRef": {
-      "description": "An opaque host-issued reference to secret material. The identifier is never sufficient authority on its own; privileged consumers must revalidate plugin ownership and operation scope.",
+      "description": "A host-issued reference to secret material. The random identifier is opaque and never sufficient authority on its own. The non-secret key binds permission authorization to the packaged manifest resource; privileged consumers must revalidate identifier ownership, key binding, and operation scope.",
       "type": "object",
       "required": [
         "kind",
-        "id"
+        "id",
+        "key"
       ],
       "properties": {
         "kind": {
@@ -140,6 +141,12 @@
           "type": "string",
           "minLength": 16,
           "maxLength": 256
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\u0000]+$"
         }
       },
       "additionalProperties": false

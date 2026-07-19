@@ -357,6 +357,7 @@ export type SecretLeaseRef = {
 export type SecretRef = {
   kind: "secret";
   id: string;
+  key: string;
 };
 
 export type SemanticVersion = string;

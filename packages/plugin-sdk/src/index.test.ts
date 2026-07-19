@@ -17,6 +17,7 @@ import type { PluginSecretStore, SecretRef } from "./index.ts";
 const testSecretRef: SecretRef = {
   kind: "secret",
   id: "secret-reference-1",
+  key: "token",
 };
 
 const testSecretStore: PluginSecretStore = {
@@ -76,6 +77,7 @@ test("PluginSecretStore exposes opaque references instead of plaintext reads", a
   assert.deepEqual(await testSecretStore.get("token"), testSecretRef);
   assert.deepEqual(await testSecretStore.set("token", "already-known-value"), testSecretRef);
   assert.equal("value" in testSecretRef, false);
+  assert.equal(testSecretRef.key, "token");
 });
 
 test("DisposableStore disposes every item once", () => {

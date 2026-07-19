@@ -97,12 +97,18 @@ function createHostClient(transport) {
     } else request.resolve(message.result);
     return true;
   }
-  function request(method, params) {
+  function request(method, params, options = {}) {
     const id = nextId;
     nextId = nextId === Number.MAX_SAFE_INTEGER ? 0 : nextId + 1;
     return new Promise((resolve, reject) => {
       pending.set(`${typeof id}:${String(id)}`, { resolve, reject });
-      transport.post({ jsonrpc: "2.0", id, method, params });
+      transport.post({
+        jsonrpc: "2.0",
+        id,
+        method,
+        params,
+        ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }),
+      });
     });
   }
   function notify(method, params) {
@@ -132,7 +138,22 @@ function assertCredentialRef(credential) {
     || credential.id.length < 16
     || credential.id.length > 256
   ) throw new PluginError("invalid_argument", "Credential reference is invalid");
-  return { kind: credential.kind, id: credential.id };
+  if (
+    credential.kind === "secret"
+    && (
+      typeof credential.key !== "string"
+      || credential.key.length < 1
+      || credential.key.length > 256
+      || credential.key.includes("\0")
+    )
+  ) throw new PluginError("invalid_argument", "Credential reference is invalid");
+  return credential.kind === "secret"
+    ? { kind: "secret", id: credential.id, key: credential.key }
+    : { kind: "credential", id: credential.id };
+}
+
+function forwardedDeadline(value, maximum) {
+  return Number.isSafeInteger(value) && value >= 1 && value <= maximum ? value : undefined;
 }
 
 function assertCompanionId(companionId) {
@@ -172,7 +193,9 @@ function createPluginContext(config, client) {
     }),
   };
   const network = {
-    request: (request) => client.request("network.request", request),
+    request: (request) => client.request("network.request", request, {
+      deadlineMs: forwardedDeadline(request?.timeoutMs, 300_000),
+    }),
   };
   const filesystem = {
     readFile: (filePath, options = {}) => client.request("filesystem.readFile", {
@@ -205,12 +228,16 @@ function createPluginContext(config, client) {
       };
       return Object.freeze({
         id: result.handleId,
-        request: (method, params, options = {}) => client.request("companion.request", {
-          handleId: result.handleId,
-          method,
-          ...(params === undefined ? {} : { params }),
-          ...options,
-        }),
+        request: (method, params, options = {}) => client.request(
+          "companion.request",
+          {
+            handleId: result.handleId,
+            method,
+            ...(params === undefined ? {} : { params }),
+            ...options,
+          },
+          { deadlineMs: forwardedDeadline(options.timeoutMs, 60_000) },
+        ),
         stop,
         dispose() { void stop().catch(() => {}); },
       });

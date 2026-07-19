@@ -1,10 +1,12 @@
 "use strict";
 
 const { PluginRpcError, RPC_ERRORS } = require("./rpcRouter.cjs");
+const { PLUGIN_RPC_MAX_RAW_BYTES } = require("./constants.cjs");
 const { canonicalizeNetworkOrigin } = require("./permissionResources.cjs");
 
-const MAX_NETWORK_BODY_BYTES = 1024 * 1024;
+const MAX_NETWORK_BODY_BYTES = PLUGIN_RPC_MAX_RAW_BYTES;
 const MAX_NETWORK_HEADERS = 64;
+const MAX_NETWORK_HEADER_BYTES = 64 * 1024;
 const MAX_NETWORK_REDIRECTS = 5;
 const FORBIDDEN_REQUEST_HEADERS = new Set([
   "connection",
@@ -51,13 +53,22 @@ function normalizeHeaders(value) {
   const entries = Object.entries(value);
   if (entries.length > MAX_NETWORK_HEADERS) throw invalidArgument("Plugin network request has too many headers");
   const headers = {};
+  let headerBytes = 0;
   for (const [rawName, rawValue] of entries) {
     const name = rawName.toLowerCase();
     if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/u.test(name) || FORBIDDEN_REQUEST_HEADERS.has(name)) {
       throw invalidArgument(`Plugin network request header is forbidden: ${rawName}`);
     }
-    if (typeof rawValue !== "string" || rawValue.length > 8_192 || /[\r\n]/u.test(rawValue)) {
+    if (
+      typeof rawValue !== "string"
+      || rawValue.length > 8_192
+      || /[\u0000-\u0008\u000a-\u001f\u007f]/u.test(rawValue)
+    ) {
       throw invalidArgument(`Plugin network request header value is invalid: ${rawName}`);
+    }
+    headerBytes += Buffer.byteLength(name) + Buffer.byteLength(rawValue);
+    if (headerBytes > MAX_NETWORK_HEADER_BYTES) {
+      throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "Plugin network request headers are too large");
     }
     headers[name] = rawValue;
   }
@@ -67,6 +78,9 @@ function normalizeHeaders(value) {
 function assertNetworkRequest(params) {
   if (!params || typeof params !== "object" || Array.isArray(params)) {
     throw invalidArgument("Plugin network request is invalid");
+  }
+  if (typeof params.url !== "string" || params.url.length > 8_192) {
+    throw invalidArgument("Plugin network URL is invalid");
   }
   let url;
   try { url = new URL(params.url); }
@@ -134,7 +148,7 @@ function normalizeResponseHeaders(headers) {
     if (name.toLowerCase() === "set-cookie") continue;
     responseHeaderCount += 1;
     responseHeaderBytes += Buffer.byteLength(name) + Buffer.byteLength(value);
-    if (responseHeaderCount > MAX_NETWORK_HEADERS || responseHeaderBytes > 64 * 1024) {
+    if (responseHeaderCount > MAX_NETWORK_HEADERS || responseHeaderBytes > MAX_NETWORK_HEADER_BYTES) {
       throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "Plugin network response headers are too large");
     }
     responseHeaders[name.toLowerCase()] = value;
@@ -272,6 +286,7 @@ module.exports = {
   FORBIDDEN_REQUEST_HEADERS,
   ENTITY_REDIRECT_HEADERS,
   MAX_NETWORK_BODY_BYTES,
+  MAX_NETWORK_HEADER_BYTES,
   MAX_NETWORK_HEADERS,
   MAX_NETWORK_REDIRECTS,
   PluginNetworkBroker,

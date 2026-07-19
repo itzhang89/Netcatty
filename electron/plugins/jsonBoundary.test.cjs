@@ -46,3 +46,35 @@ test("main-process JSON boundary enforces an incremental UTF-8 byte budget", () 
   );
   assert.throws(() => assertPluginJsonValue({}, { maxBytes: 0 }), /positive safe integer/);
 });
+
+test("maximum broker raw payloads fit inside JSON-RPC envelopes", () => {
+  const { PLUGIN_RPC_MAX_RAW_BYTES, PLUGIN_RPC_MAX_JSON_BYTES } = require("./constants.cjs");
+  const { assertRpcMessage } = require("./contractValidator.cjs");
+  const data = Buffer.alloc(PLUGIN_RPC_MAX_RAW_BYTES).toString("base64");
+  const response = {
+    jsonrpc: "2.0",
+    id: 1,
+    result: {
+      url: `https://example.com/${"x".repeat(8_000)}`,
+      status: 200,
+      headers: { "x-budget": "y".repeat(64 * 1024) },
+      body: { encoding: "base64", data },
+    },
+  };
+  assert.ok(Buffer.byteLength(JSON.stringify(response)) < PLUGIN_RPC_MAX_JSON_BYTES);
+  assert.doesNotThrow(() => assertRpcMessage(response));
+  const request = {
+    jsonrpc: "2.0",
+    id: 2,
+    method: "network.request",
+    params: {
+      url: `https://example.com/${"x".repeat(8_000)}`,
+      headers: Object.fromEntries(Array.from({ length: 8 }, (_, index) => (
+        [`x-budget-${index}`, "\\".repeat(8 * 1024)]
+      ))),
+      body: { encoding: "utf8", data: "\0".repeat(PLUGIN_RPC_MAX_RAW_BYTES) },
+    },
+  };
+  assert.ok(Buffer.byteLength(JSON.stringify(request)) < PLUGIN_RPC_MAX_JSON_BYTES);
+  assert.doesNotThrow(() => assertRpcMessage(request));
+});

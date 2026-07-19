@@ -82,9 +82,11 @@ advanced path can be publicly enabled.
 ### Network
 
 The ordinary browser SDK has no direct network primitive. `network.request` supports
-HTTP(S) only, exact origin authorization, bounded headers, a 1 MiB request and
+HTTP(S) only, exact origin authorization, bounded headers, a 128 KiB request and
 response body, explicit timeout, no URL credentials, no ambient cookies, no
 transport headers, and manual redirects. Every redirect origin is authorized.
+The SDK forwards the validated request timeout as the host RPC deadline, so the
+router cancels stalled broker work at the same boundary.
 Cross-origin redirects strip sensitive headers; 301/302/303 transitions do not
 replay POST bodies as GET requests.
 
@@ -98,9 +100,11 @@ the handler resolves the real path and requires it to equal the authorized
 resource; callers must therefore supply an already canonical path and symlink
 aliases fail closed. File opens use `O_NOFOLLOW` where supported and bind the
 opened handle to both the pre-open authorized inode and the current path inode.
-Directory listing uses an opened directory handle and inode revalidation, so a
-path replacement cannot redirect a previously authorized list. Reads use the
-actual handle bytes rather than trusting a pre-read size, with a 1 MiB cap.
+Directory listing requires a host adapter that can bind both inode checks and
+enumeration to the same native directory handle. Portable Node does not expose
+that primitive, so the default implementation fails closed while preserving
+the SDK/RPC seam for a native adapter. Reads use the actual handle bytes rather
+than trusting a pre-read size, with a 128 KiB cap. Larger payloads use streams.
 Arbitrary-path writes currently require an existing regular file and explicit
 overwrite; no `O_CREAT` path exists because Node cannot portably bind creation
 to an opened parent-directory handle across macOS, Linux, and Windows. A later
@@ -112,8 +116,11 @@ listing is limited to 1,000 entries.
 
 Secret values are encrypted with Electron `safeStorage`; unavailable OS
 encryption or Linux's insecure `basic_text` fallback denies the operation.
-SQLite stores ciphertext plus an opaque random
-`SecretRef`, never plaintext. Secret tables and grants are user-owned security
+SQLite stores ciphertext plus a `SecretRef` containing an opaque random ID and
+the non-secret originating key, never plaintext. The key lets lease permission
+checks use the same manifest resource as `secrets.get`/`set`; post-permission
+lookup revalidates that the random ID still belongs to that key and plugin.
+Secret tables and grants are user-owned security
 data and do not cascade when a package version is removed.
 
 Plugins can ask `PluginCredentialBroker` for a `SecretLeaseRef`. A lease is
@@ -122,8 +129,9 @@ runtime, operation ID, abort signal and secret ownership. Only a host capability
 broker can redeem it. A plugin-owned `SecretRef`, a Netcatty-owned opaque
 `CredentialRef`, or a lease ID alone is not authority. Netcatty credential
 references use an injected main-process resolver. Authorization treats both
-secret and credential references as opaque identifiers and does not reveal
-whether they exist; ownership and existence are checked only after permission,
+secret and credential IDs as opaque identifiers and does not reveal whether
+they exist; secret keys are already plugin-declared resources. Ownership,
+ID-to-key binding, and existence are checked only after permission,
 immediately before lease issue. Plaintext resolves only when the one-use lease
 is consumed. This is the stable credential handoff used by
 connection/authentication Providers in PR 7.
@@ -140,6 +148,8 @@ method-not-found; privileged work remains in the main host brokers.
 Timed-out companion RPC identifiers are retired until one late response is
 discarded, and the runtime SDK retries a failed stop rather than marking the
 handle locally stopped before the host confirms cleanup.
+The validated companion request timeout is also forwarded as its host RPC
+deadline.
 
 On POSIX, companions start in a dedicated process group; shutdown signals the
 whole group, escalates the whole group to `SIGKILL`, and waits until it no longer
@@ -178,12 +188,17 @@ after durable user data can exist.
 ## Downstream contracts
 
 - PR 4 consumes `PermissionRequest`, structured grant lists/revocation, runtime
-  events and the existing RPC registry for settings/commands/views.
+  events and the existing RPC registry for settings/commands/views. Secret
+  settings retain their declared key in `SecretRef` without exposing plaintext.
 - PRs 5-6 reuse immutable caller identity, permission middleware, cancellation,
   quotas and runtime-stop cleanup; the direct terminal fast path remains a
-  separate MessagePort and must still enforce sensitive-input bypass.
-- PR 7 consumes operation-bound secret leases and digest-verified companions.
-- PR 8 stores encrypted sync sidecars separately from package cascade storage.
+  separate MessagePort and must still enforce sensitive-input bypass. Their
+  larger payloads use streams rather than the 128 KiB control-plane budget.
+- PR 7 consumes operation-bound secret leases and digest-verified companions;
+  secret lease authorization uses the declared key while ID ownership remains
+  a post-permission lookup. Importers use bounded streams, not directory walks.
+- PR 8 stores encrypted sync sidecars separately from package cascade storage
+  and transports larger encrypted objects over the existing stream seam.
 - PR 9 supplies signed publisher principals and trust policy through placement;
   signed identity changes force a fresh grant instead of widening an unsigned
   grant silently.

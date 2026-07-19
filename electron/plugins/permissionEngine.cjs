@@ -453,7 +453,7 @@ class PluginPermissionEngine {
     try {
       decisionResources = normalizePermissionResources(
         descriptor.permission,
-        decision.resources?.length ? decision.resources : resources,
+        decision.resources === undefined ? resources : decision.resources,
         "Plugin permission decision resources",
       );
     } catch (error) {

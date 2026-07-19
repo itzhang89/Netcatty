@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const fsp = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -205,6 +206,56 @@ test("approved host capabilities reuse application grants through the registry",
     { found: true, value: 42 },
   );
   assert.equal(prompts, 1);
+});
+
+test("host service wires a handle-bound directory adapter without changing the RPC seam", async (context) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-")));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const directoryPath = path.join(root, "enumerate");
+  await fsp.mkdir(directoryPath);
+  await fsp.writeFile(path.join(directoryPath, "entry.txt"), "entry");
+  const service = createPluginHostService({
+    ...createOptions(root),
+    requestPermissionDecision: async (request) => ({
+      requestId: request.requestId,
+      decision: "allow",
+      scope: "once",
+    }),
+    openPluginDirectoryHandle: async (directoryPath) => {
+      const stats = await fsp.stat(directoryPath);
+      const directory = await fsp.opendir(directoryPath);
+      return {
+        stat: async () => stats,
+        read: () => directory.read(),
+        close: async () => {
+          try { await directory.close(); }
+          catch (error) { if (error?.code !== "ERR_DIR_CLOSED") throw error; }
+        },
+      };
+    },
+  });
+  context.after(() => service.manager.shutdown());
+  const pluginManifest = {
+    id: "com.example.directory",
+    name: "directory",
+    version: "1.0.0",
+    publisher: "example",
+    permissions: { optional: [{ permission: "filesystem.read", resources: [directoryPath] }] },
+  };
+  const routes = service.rpcRegistry.createRoutes({
+    pluginId: pluginManifest.id,
+    pluginVersion: pluginManifest.version,
+    runtimeId: "runtime-1",
+    runtimeKind: "browser",
+    manifest: pluginManifest,
+  });
+  assert.deepEqual(
+    await routes.requestHandlers["filesystem.readDirectory"](
+      { path: directoryPath },
+      transportContext(),
+    ),
+    { entries: [{ name: "entry.txt", kind: "file" }] },
+  );
 });
 
 test("custom host methods without an explicit authorization classification are denied", async (context) => {

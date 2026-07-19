@@ -118,6 +118,27 @@ test("permission decisions cannot persist resources broader than the manifest de
   database.close();
 });
 
+test("an explicit empty allow-decision never widens to every requested resource", async (context) => {
+  const database = createDatabase(context);
+  const engine = new PluginPermissionEngine({
+    database,
+    requestDecision: async (request) => ({
+      requestId: request.requestId,
+      decision: "allow",
+      scope: "always",
+      resources: [],
+    }),
+  });
+  const pluginManifest = manifest({ optional: ["storage"] });
+  await assert.rejects(engine.authorize(runtimeContext(pluginManifest), {
+    permission: "storage",
+    resources: ["*"],
+    reason: "Use storage",
+  }), /does not cover the requested resources/);
+  assert.equal(database.listPermissionGrants(pluginManifest.id).length, 0);
+  database.close();
+});
+
 test("application grants can be listed and revoked for the permission UI", async (context) => {
   const database = createDatabase(context);
   let prompts = 0;

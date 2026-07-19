@@ -479,7 +479,13 @@ class PluginCompanionSupervisor {
     }
     this.quotaManager?.trackProcess?.(
       record.quotaResourceId,
-      Object.freeze({ pluginId: context.pluginId, runtimeId: context.runtimeId }),
+      Object.freeze({
+        pluginId: record.pluginId,
+        pluginVersion: record.pluginVersion,
+        runtimeId: record.runtimeId,
+        runtimeKind: record.runtimeKind,
+        securityPrincipal: record.securityPrincipal,
+      }),
       { getProcessId: () => child.pid },
     );
     child.once("error", () => { void this.#stopRecord(record); });

@@ -344,8 +344,10 @@ lifecycle primitives:
   and filesystem access, companion handles, logging, and subscriptions.
 
 `PluginSecretStore.get()` never returns plaintext. It returns a host-issued
-`SecretRef`, and `set()` immediately transfers a value already known to the
-plugin into host storage before returning the same kind of reference. Network,
+`SecretRef`. Its random ID stays opaque; its non-secret `key` binds later lease
+authorization to the same manifest resource used by `get()`/`set()`. `set()`
+immediately transfers a value already known to the plugin into host storage
+before returning the same kind of reference. Network,
 authentication, and companion brokers can consume a one-use lease for the
 reference while the main process revalidates plugin ownership and operation
 scope. PR 7 may also supply a host-issued `CredentialRef` for Netcatty-owned
@@ -363,6 +365,9 @@ never grants authority by itself.
 and an existing regular file. This preserves one stable SDK method while the
 cross-platform host denies unsafe arbitrary-path creation until it can bind a
 new child to an opened parent directory without a path race.
+`readDirectory()` likewise keeps its stable SDK/RPC method but fails closed
+unless the main process supplies a native adapter whose inode checks and entry
+enumeration are bound to the same directory handle.
 
 Permission names already use the phase-3 enforcement boundaries: clipboard
 read/write, terminal metadata/output/input and input/output interception, Vault

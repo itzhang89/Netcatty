@@ -4,9 +4,10 @@ const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
 
+const { PLUGIN_RPC_MAX_RAW_BYTES } = require("./constants.cjs");
 const { PluginRpcError, RPC_ERRORS } = require("./rpcRouter.cjs");
 
-const MAX_FILESYSTEM_BYTES = 1024 * 1024;
+const MAX_FILESYSTEM_BYTES = PLUGIN_RPC_MAX_RAW_BYTES;
 const MAX_DIRECTORY_ENTRIES = 1_000;
 const NOFOLLOW = fs.constants.O_NOFOLLOW ?? 0;
 
@@ -187,6 +188,10 @@ class PluginFilesystemBroker {
   constructor(options = {}) {
     this.quotaManager = options.quotaManager ?? null;
     this.fileSystem = options.fileSystem ?? fsp;
+    this.openDirectoryHandle = options.openDirectoryHandle ?? null;
+    if (this.openDirectoryHandle != null && typeof this.openDirectoryHandle !== "function") {
+      throw new TypeError("Secure plugin directory handle adapter must be a function");
+    }
   }
 
   validateRead(params) { return assertReadParams(params); }
@@ -302,9 +307,21 @@ class PluginFilesystemBroker {
     const { canonical, stats } = await resolveExistingPath(value.path, this.fileSystem);
     assertAuthorizedPath(context, "filesystem.read", canonical);
     if (!stats.isDirectory()) throw invalidArgument("Plugin filesystem directory target is not a directory");
-    const directory = await this.fileSystem.opendir(canonical);
+    if (!this.openDirectoryHandle) {
+      throw new PluginRpcError(
+        RPC_ERRORS.unsupported,
+        "Secure plugin directory enumeration is unavailable on this runtime",
+      );
+    }
+    const directory = await this.openDirectoryHandle(canonical, { signal: context.signal });
+    if (
+      !directory
+      || typeof directory.stat !== "function"
+      || typeof directory.read !== "function"
+      || typeof directory.close !== "function"
+    ) throw new TypeError("Secure plugin directory handle adapter returned an invalid handle");
     try {
-      assertSameOpenedDirectory(stats, await this.fileSystem.stat(canonical));
+      assertSameOpenedDirectory(stats, await directory.stat());
       const entries = [];
       for (;;) {
         const entry = await directory.read();
@@ -317,6 +334,7 @@ class PluginFilesystemBroker {
           );
         }
       }
+      assertSameOpenedDirectory(stats, await directory.stat());
       assertSameOpenedDirectory(stats, await this.fileSystem.stat(canonical));
       await context.assertActive();
       return {
@@ -325,8 +343,7 @@ class PluginFilesystemBroker {
           .sort((left, right) => left.name.localeCompare(right.name, "en")),
       };
     } finally {
-      try { await directory.close(); }
-      catch (error) { if (error?.code !== "ERR_DIR_CLOSED") throw error; }
+      await directory.close();
     }
   }
 }

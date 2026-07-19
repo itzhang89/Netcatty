@@ -22,8 +22,12 @@ function assertSecretRef(secret) {
     || typeof secret.id !== "string"
     || secret.id.length < 16
     || secret.id.length > 256
+    || typeof secret.key !== "string"
+    || secret.key.length < 1
+    || secret.key.length > 256
+    || secret.key.includes("\0")
   ) throw new PluginRpcError(RPC_ERRORS.invalidArgument, "Plugin secret reference is invalid");
-  return secret.id;
+  return { id: secret.id, key: secret.key };
 }
 
 class PluginSecretStore {
@@ -51,13 +55,13 @@ class PluginSecretStore {
   getReference(pluginId, key) {
     assertSecretKey(key);
     const record = this.database.getSecretByKey(pluginId, key);
-    return record ? Object.freeze({ kind: "secret", id: record.secretRef }) : undefined;
+    return record ? Object.freeze({ kind: "secret", id: record.secretRef, key: record.key }) : undefined;
   }
 
   getRecordByReference(pluginId, secret) {
-    const secretRef = assertSecretRef(secret);
-    const record = this.database.getSecretByRef(pluginId, secretRef);
-    if (!record) {
+    const reference = assertSecretRef(secret);
+    const record = this.database.getSecretByRef(pluginId, reference.id);
+    if (!record || record.key !== reference.key) {
       throw new PluginRpcError(RPC_ERRORS.notFound, "Plugin secret reference was not found");
     }
     return record;
@@ -75,7 +79,7 @@ class PluginSecretStore {
       throw new PluginRpcError(RPC_ERRORS.unavailable, "OS-backed plugin secret encryption failed");
     }
     this.database.upsertSecret({ pluginId, key, secretRef, ciphertext });
-    return Object.freeze({ kind: "secret", id: secretRef });
+    return Object.freeze({ kind: "secret", id: secretRef, key });
   }
 
   delete(pluginId, key) {

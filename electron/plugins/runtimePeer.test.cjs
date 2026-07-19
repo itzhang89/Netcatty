@@ -11,6 +11,7 @@ test("runtime peer exposes secure host capabilities over the canonical RPC trans
   const { port1, port2 } = new MessageChannel();
   const values = new Map();
   const calls = [];
+  const deadlines = [];
   const host = new PluginRpcRouter({
     pluginId: "com.example.peer",
     send(message) { port1.postMessage(message); },
@@ -18,11 +19,13 @@ test("runtime peer exposes secure host capabilities over the canonical RPC trans
       "storage.set": async ({ key, value }) => { values.set(key, value); return null; },
       "secrets.set": async ({ key, value }) => {
         calls.push(["secret", key, value]);
-        return { secret: { kind: "secret", id: "secret-reference-0000000000000000" } };
+        return {
+          secret: { kind: "secret", id: "secret-reference-0000000000000000", key },
+        };
       },
       "secrets.get": async () => ({
         found: true,
-        secret: { kind: "secret", id: "secret-reference-0000000000000000" },
+        secret: { kind: "secret", id: "secret-reference-0000000000000000", key: "api-key" },
       }),
       "credentials.createLease": async ({ operationId }) => ({
         kind: "secret-lease",
@@ -30,18 +33,24 @@ test("runtime peer exposes secure host capabilities over the canonical RPC trans
         operationId,
         expiresAt: 10_000,
       }),
-      "network.request": async ({ url }) => ({
-        url,
-        status: 200,
-        headers: {},
-        body: { encoding: "base64", data: "b2s=" },
-      }),
+      "network.request": async ({ url, timeoutMs }, requestContext) => {
+        deadlines.push(["network", requestContext.deadlineMs, timeoutMs]);
+        return {
+          url,
+          status: 200,
+          headers: {},
+          body: { encoding: "base64", data: "b2s=" },
+        };
+      },
       "filesystem.readFile": async ({ path }) => ({ data: `read:${path}` }),
       "filesystem.writeFile": async ({ path, data }) => { calls.push(["write", path, data]); return null; },
       "filesystem.stat": async () => ({ kind: "file", size: 2, modifiedAt: 1 }),
       "filesystem.readDirectory": async () => ({ entries: [{ name: "file", kind: "file" }] }),
       "companion.start": async () => ({ handleId: "companion-handle-000000000000" }),
-      "companion.request": async ({ method, params }) => ({ method, params }),
+      "companion.request": async ({ method, params, timeoutMs }, requestContext) => {
+        deadlines.push(["companion", requestContext.deadlineMs, timeoutMs]);
+        return { method, params };
+      },
       "companion.stop": async ({ handleId }) => { calls.push(["stop", handleId]); return null; },
       "log.write": async () => null,
     },
@@ -77,13 +86,16 @@ test("runtime peer exposes secure host capabilities over the canonical RPC trans
               purpose: "Authenticate connection",
             });
             assert.equal(vaultLease.operationId, "connection:login");
-            assert.equal((await context.network.request({ url: "https://example.com" })).status, 200);
+            assert.equal((await context.network.request({
+              url: "https://example.com",
+              timeoutMs: 45_000,
+            })).status, 200);
             assert.equal(await context.filesystem.readFile("/tmp/file"), "read:/tmp/file");
             await context.filesystem.writeFile("/tmp/file", "ok", { overwrite: true });
             assert.equal((await context.filesystem.stat("/tmp/file")).kind, "file");
             assert.equal((await context.filesystem.readDirectory("/tmp")).length, 1);
             const companion = await context.companions.start("com.example.peer.helper");
-            assert.deepEqual(await companion.request("echo", { value: 1 }), {
+            assert.deepEqual(await companion.request("echo", { value: 1 }, { timeoutMs: 50_000 }), {
               method: "echo",
               params: { value: 1 },
             });
@@ -113,6 +125,10 @@ test("runtime peer exposes secure host capabilities over the canonical RPC trans
     ["secret", "api-key", "value"],
     ["write", "/tmp/file", "ok"],
     ["stop", "companion-handle-000000000000"],
+  ]);
+  assert.deepEqual(deadlines, [
+    ["network", 45_000, 45_000],
+    ["companion", 50_000, 50_000],
   ]);
   await host.request("plugin.deactivate", {});
   await peer.dispose();

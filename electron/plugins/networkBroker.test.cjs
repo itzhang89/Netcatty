@@ -3,7 +3,11 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { PluginNetworkBroker, MAX_NETWORK_BODY_BYTES } = require("./networkBroker.cjs");
+const {
+  PluginNetworkBroker,
+  MAX_NETWORK_BODY_BYTES,
+  MAX_NETWORK_HEADER_BYTES,
+} = require("./networkBroker.cjs");
 const { RPC_ERRORS } = require("./rpcRouter.cjs");
 
 function runtimeContext() {
@@ -128,6 +132,16 @@ test("network request validation rejects transport headers, credentials, and non
     method: "POST",
     body: { encoding: "base64", data: "YQ" },
   }), /not canonical/);
+  assert.throws(() => broker.validate({
+    url: "https://example.com",
+    headers: Object.fromEntries(Array.from({ length: 9 }, (_, index) => (
+      [`x-budget-${index}`, "x".repeat(MAX_NETWORK_HEADER_BYTES / 8)]
+    ))),
+  }), /headers are too large/);
+  assert.throws(() => broker.validate({
+    url: "https://example.com",
+    headers: { "x-control": "before\0after" },
+  }), /header value is invalid/);
 });
 
 test("network response streaming stops above the byte cap", async () => {

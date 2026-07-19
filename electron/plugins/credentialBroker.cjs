@@ -5,7 +5,7 @@ const { MAX_SECRET_BYTES, assertSecretRef } = require("./secretStore.cjs");
 
 function assertCredentialRef(credential) {
   if (credential?.kind === "secret") {
-    return { kind: "secret", id: assertSecretRef(credential) };
+    return { kind: "secret", ...assertSecretRef(credential) };
   }
   if (
     !credential
@@ -65,7 +65,7 @@ class PluginCredentialBroker {
     }
     return {
       permission: "secrets",
-      resources: [`secret-ref:${validated.secret.id}`],
+      resources: [`secret:${validated.secret.key}`],
       reason: `Use plugin secret for ${validated.purpose}`,
       operationId: validated.operationId,
     };
