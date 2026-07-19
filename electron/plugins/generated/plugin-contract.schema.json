@@ -144,6 +144,54 @@
       },
       "additionalProperties": false
     },
+    "CredentialRef": {
+      "description": "An opaque host-issued reference to a Netcatty-owned credential. The host validates ownership and provider-operation scope before issuing a plaintext lease.",
+      "type": "object",
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "const": "credential"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 256
+        }
+      },
+      "additionalProperties": false
+    },
+    "SecretLeaseRef": {
+      "description": "An opaque, operation-bound, single-consumption lease. Only a host capability broker can consume it after revalidating runtime identity and operation scope.",
+      "type": "object",
+      "required": [
+        "kind",
+        "id",
+        "operationId",
+        "expiresAt"
+      ],
+      "properties": {
+        "kind": {
+          "const": "secret-lease"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 32,
+          "maxLength": 256
+        },
+        "operationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/SafePositiveInteger"
+        }
+      },
+      "additionalProperties": false
+    },
     "SemanticVersion": {
       "type": "string",
       "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
@@ -180,6 +228,7 @@
       "type": "string",
       "enum": [
         "storage",
+        "runtime.advanced",
         "settings.read",
         "settings.write",
         "commands",
@@ -211,6 +260,12 @@
         "provider.importer"
       ]
     },
+    "PermissionResource": {
+      "description": "A host-canonicalized permission resource. Filesystem resources may be absolute platform paths; other permission kinds impose narrower runtime limits.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192
+    },
     "PermissionDeclaration": {
       "oneOf": [
         {
@@ -232,9 +287,7 @@
               "maxItems": 128,
               "uniqueItems": true,
               "items": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2048
+                "$ref": "#/$defs/PermissionResource"
               }
             },
             "reason": {
@@ -1737,6 +1790,38 @@
         "pluginId": {
           "$ref": "#/$defs/PluginId"
         },
+        "pluginVersion": {
+          "$ref": "#/$defs/SemanticVersion"
+        },
+        "pluginName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "publisher": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "runtimeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "runtimeKind": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "browser",
+            "utility",
+            null
+          ]
+        },
         "permission": {
           "$ref": "#/$defs/PluginPermission"
         },
@@ -1745,9 +1830,7 @@
           "maxItems": 128,
           "uniqueItems": true,
           "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2048
+            "$ref": "#/$defs/PermissionResource"
           }
         },
         "reason": {
@@ -1756,6 +1839,11 @@
           "maxLength": 1024
         },
         "operationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "sessionId": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
@@ -1789,9 +1877,7 @@
               "maxItems": 128,
               "uniqueItems": true,
               "items": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 2048
+                "$ref": "#/$defs/PermissionResource"
               }
             }
           },

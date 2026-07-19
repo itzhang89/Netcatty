@@ -1,4 +1,5 @@
 import type {
+  CredentialRef,
   FeatureId,
   JsonValue,
   PluginErrorData,
@@ -6,6 +7,7 @@ import type {
   PluginId,
   PluginWireErrorCode,
   RpcErrorObject,
+  SecretLeaseRef,
   SecretRef,
   SemanticVersion,
 } from "@netcatty/plugin-contract";
@@ -43,6 +45,71 @@ export interface PluginSecretStore {
   delete(key: string): Promise<void>;
 }
 
+export interface PluginCredentialLeaseOptions {
+  readonly operationId: string;
+  readonly purpose: string;
+  readonly ttlMs?: number;
+}
+
+export interface PluginCredentialBroker {
+  createLease(credential: SecretRef | CredentialRef, options: PluginCredentialLeaseOptions): Promise<SecretLeaseRef>;
+}
+
+export interface PluginNetworkRequest {
+  readonly url: string;
+  readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly body?: Readonly<{ encoding: "utf8" | "base64"; data: string }>;
+  readonly timeoutMs?: number;
+}
+
+export interface PluginNetworkResponse {
+  readonly url: string;
+  readonly status: number;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: Readonly<{ encoding: "base64"; data: string }>;
+}
+
+export interface PluginNetworkClient {
+  request(request: PluginNetworkRequest): Promise<PluginNetworkResponse>;
+}
+
+export interface PluginFilesystemEntry {
+  readonly name: string;
+  readonly kind: "file" | "directory" | "other";
+}
+
+export interface PluginFilesystemStat {
+  readonly kind: "file" | "directory" | "other";
+  readonly size: number;
+  readonly modifiedAt: number;
+}
+
+export interface PluginFilesystemClient {
+  readFile(path: string, options?: Readonly<{ encoding?: "utf8" | "base64"; maxBytes?: number }>): Promise<string>;
+  writeFile(path: string, data: string, options?: Readonly<{ encoding?: "utf8" | "base64"; overwrite?: boolean }>): Promise<void>;
+  stat(path: string): Promise<PluginFilesystemStat>;
+  readDirectory(path: string): Promise<readonly PluginFilesystemEntry[]>;
+}
+
+export interface PluginCompanionRequestOptions {
+  readonly timeoutMs?: number;
+}
+
+export interface PluginCompanionHandle extends Disposable {
+  readonly id: string;
+  request<T extends JsonValue = JsonValue>(
+    method: string,
+    params?: JsonValue,
+    options?: PluginCompanionRequestOptions,
+  ): Promise<T>;
+  stop(): Promise<void>;
+}
+
+export interface PluginCompanionService {
+  start(companionId: string): Promise<PluginCompanionHandle>;
+}
+
 export interface PluginContext {
   readonly pluginId: PluginId;
   readonly netcattyVersion: SemanticVersion;
@@ -51,6 +118,10 @@ export interface PluginContext {
   readonly subscriptions: DisposableStore;
   readonly storage: PluginKeyValueStore;
   readonly secrets: PluginSecretStore;
+  readonly credentials: PluginCredentialBroker;
+  readonly network: PluginNetworkClient;
+  readonly filesystem: PluginFilesystemClient;
+  readonly companions: PluginCompanionService;
   readonly logger: PluginLogger;
 }
 

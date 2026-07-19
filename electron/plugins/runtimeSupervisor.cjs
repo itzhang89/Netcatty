@@ -17,6 +17,10 @@ const {
   createDefaultPluginHostRpcRegistry,
 } = require("./hostRpcRegistry.cjs");
 const {
+  assertSecurityPrincipal,
+  defaultSecurityPrincipal,
+} = require("./permissionResources.cjs");
+const {
   PLUGIN_CONTAINMENT_ERROR_CODE,
   UtilityPluginRuntime,
 } = require("./utilityPluginRuntime.cjs");
@@ -61,6 +65,11 @@ class RuntimeSupervisor {
     this.resolveRuntimeKind = options.resolveRuntimeKind ?? (({ plugin }) => (
       plugin.manifest.main.browser ? "browser" : "utility"
     ));
+    this.resolveSecurityPrincipal = options.resolveSecurityPrincipal
+      ?? (({ plugin }) => defaultSecurityPrincipal(plugin.manifest, plugin.archiveSha256));
+    if (typeof this.resolveRuntimeKind !== "function" || typeof this.resolveSecurityPrincipal !== "function") {
+      throw new TypeError("Plugin runtime placement and security-principal resolvers must be functions");
+    }
     this.utilityModuleMappings = options.utilityModuleMappings ?? {
       "@netcatty/plugin-sdk": pathToFileURL(path.join(
         this.appRoot, "node_modules", "@netcatty", "plugin-sdk", "dist", "index.js",
@@ -73,6 +82,8 @@ class RuntimeSupervisor {
       browser: (runtimeOptions) => new BrowserPluginRuntime(runtimeOptions),
       utility: (runtimeOptions) => new UtilityPluginRuntime(runtimeOptions),
     };
+    this.runtimeResourceMonitor = options.runtimeResourceMonitor ?? null;
+    this.resourceMonitors = new Map();
     this.runtimes = new Map();
     this.runtimeIdentities = new Map();
     this.starting = new Map();
@@ -119,6 +130,7 @@ class RuntimeSupervisor {
       pluginVersion: identity.pluginVersion,
       runtimeId: identity.runtimeId,
       runtimeKind: identity.runtimeKind,
+      securityPrincipal: identity.securityPrincipal,
       token: params.token,
       value: freezeJson(structuredClone(params.value)),
     });
@@ -134,6 +146,7 @@ class RuntimeSupervisor {
       pluginVersion: identity?.pluginVersion ?? details.pluginVersion ?? null,
       runtimeId: identity?.runtimeId ?? null,
       runtimeKind: identity?.runtimeKind ?? details.kind ?? null,
+      securityPrincipal: identity?.securityPrincipal ?? null,
       status,
       error: details.error == null ? null : String(details.error),
       quarantinedAt: details.quarantinedAt ?? null,
@@ -211,9 +224,13 @@ class RuntimeSupervisor {
       ...(plugin.manifest.main.node ? ["utility"] : []),
     ]);
     const placementPlugin = freezeJson(structuredClone(plugin));
+    const securityPrincipal = assertSecurityPrincipal(await raceWithAbort(Promise.resolve(
+      this.resolveSecurityPrincipal(Object.freeze({ plugin: placementPlugin, signal })),
+    ), signal));
     const kind = await raceWithAbort(Promise.resolve(this.resolveRuntimeKind(Object.freeze({
       plugin: placementPlugin,
       availableKinds,
+      securityPrincipal,
       signal,
     }))), signal);
     signal.throwIfAborted();
@@ -235,6 +252,7 @@ class RuntimeSupervisor {
       pluginVersion: plugin.activeVersion,
       runtimeId: randomUUID(),
       runtimeKind: kind,
+      securityPrincipal,
       manifest: freezeJson(structuredClone(plugin.manifest)),
       packageRoot,
       logger,
@@ -313,6 +331,10 @@ class RuntimeSupervisor {
       }
       identity.assertCurrent();
       this.#setRuntimeState(identity, "running");
+      if (this.runtimeResourceMonitor) {
+        const monitor = this.runtimeResourceMonitor.trackRuntime(identity, runtime);
+        this.resourceMonitors.set(identity.runtimeId, monitor);
+      }
       return this.getRuntimeIdentity(pluginId);
     } catch (error) {
       const stillOwned = this.runtimes.get(pluginId) === runtime;
@@ -320,6 +342,7 @@ class RuntimeSupervisor {
       if (stillOwned) {
         this.runtimes.delete(pluginId);
         this.runtimeIdentities.delete(pluginId);
+        this.#releaseRuntimeResources(identity);
         try { await runtime.stop(); } catch (stopError) { cleanupError = stopError; }
       }
       if (stillOwned && cleanupError?.code === PLUGIN_CONTAINMENT_ERROR_CODE) {
@@ -366,6 +389,7 @@ class RuntimeSupervisor {
     if (this.runtimes.get(pluginId) !== runtime) return;
     this.runtimes.delete(pluginId);
     this.runtimeIdentities.delete(pluginId);
+    this.#releaseRuntimeResources(identity);
     if (details.containmentFailed) {
       this.#recordContainmentFailure(identity, details.error);
       return;
@@ -428,6 +452,7 @@ class RuntimeSupervisor {
     }
     this.runtimes.delete(pluginId);
     this.runtimeIdentities.delete(pluginId);
+    this.#releaseRuntimeResources(identity);
     let stopError;
     try {
       await runtime.stop();
@@ -452,6 +477,22 @@ class RuntimeSupervisor {
     return this.start(pluginId);
   }
 
+  #releaseRuntimeResources(identity) {
+    if (!identity) return;
+    this.resourceMonitors.get(identity.runtimeId)?.dispose?.();
+    this.resourceMonitors.delete(identity.runtimeId);
+    this.runtimeResourceMonitor?.releaseRuntime?.(identity.runtimeId);
+  }
+
+  async enforcePolicyViolation(identity, error) {
+    const current = this.runtimeIdentities.get(identity.pluginId);
+    if (!current || current.runtimeId !== identity.runtimeId) return;
+    const plugin = this.database.getActivePlugin(identity.pluginId);
+    if (plugin?.enabled) this.database.setEnabled(identity.pluginId, false);
+    await this.stop(identity.pluginId);
+    this.#setRuntimeState(identity, "error", { error: error?.message ?? String(error) });
+  }
+
   getRuntimeIdentity(pluginId) {
     const identity = this.runtimeIdentities.get(pluginId);
     if (!identity) return null;
@@ -460,6 +501,7 @@ class RuntimeSupervisor {
       pluginVersion: identity.pluginVersion,
       runtimeId: identity.runtimeId,
       runtimeKind: identity.runtimeKind,
+      securityPrincipal: identity.securityPrincipal,
     });
   }
 
@@ -543,6 +585,8 @@ class RuntimeSupervisor {
     await Promise.allSettled([...this.runtimes.keys()].map((pluginId) => this.stop(pluginId)));
     await Promise.allSettled([...this.starting.values()]);
     await Promise.allSettled([...this.stopping.values()]);
+    for (const identity of this.runtimeIdentities.values()) this.#releaseRuntimeResources(identity);
+    this.resourceMonitors.clear();
     this.runtimeListeners.clear();
     this.progressListeners.clear();
   }

@@ -7,7 +7,11 @@ const path = require("node:path");
 const test = require("node:test");
 const { DatabaseSync } = require("node:sqlite");
 
-const { PluginDatabase, SCHEMA_VERSION } = require("./database.cjs");
+const {
+  MAX_SECURITY_AUDIT_DETAILS_BYTES,
+  PluginDatabase,
+  SCHEMA_VERSION,
+} = require("./database.cjs");
 
 function createDatabase(context, clock = () => 1_000) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-db-"));
@@ -42,6 +46,19 @@ test("plugin database initializes atomically and rejects newer schemas", (contex
   assert.throws(() => new PluginDatabase(file), /newer than supported/);
 });
 
+test("obsolete unpublished v1 layouts fail with an explicit reset instruction", (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-obsolete-db-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, "plugins.sqlite");
+  const obsolete = new DatabaseSync(file);
+  obsolete.exec("CREATE TABLE plugins(id TEXT PRIMARY KEY); PRAGMA user_version = 1");
+  obsolete.close();
+  assert.throws(
+    () => new PluginDatabase(file),
+    /reset userData\/plugins\/plugins\.sqlite/,
+  );
+});
+
 test("initial schema scopes runtime and crash state to immutable plugin versions", (context) => {
   const database = createDatabase(context);
   assert.deepEqual(
@@ -60,6 +77,59 @@ test("initial schema scopes runtime and crash state to immutable plugin versions
       "updated_at",
     ],
   );
+  assert.deepEqual(
+    database.db.prepare("PRAGMA table_info(plugin_permission_grants)").all().map(({ name }) => name),
+    ["plugin_id", "permission", "resource", "declaration_hash", "granted_at"],
+  );
+  assert.deepEqual(
+    database.db.prepare("PRAGMA table_info(plugin_secrets)").all().map(({ name }) => name),
+    ["plugin_id", "key", "secret_ref", "ciphertext", "created_at", "updated_at"],
+  );
+  database.close();
+});
+
+test("user-owned security records survive package uninstall in the complete v1 schema", (context) => {
+  const database = createDatabase(context);
+  const pluginManifest = manifest();
+  database.installVersion({
+    pluginId: pluginManifest.id,
+    version: pluginManifest.version,
+    manifest: pluginManifest,
+    archiveSha256: "a".repeat(64),
+    packageRelativePath: `${pluginManifest.id}/${pluginManifest.version}/package`,
+  });
+  database.upsertPermissionGrant({
+    pluginId: pluginManifest.id,
+    permission: "network",
+    resource: "https://example.com",
+    declarationHash: "b".repeat(64),
+  });
+  database.upsertSecret({
+    pluginId: pluginManifest.id,
+    key: "api-key",
+    secretRef: "secret-reference-0000000000000000",
+    ciphertext: Buffer.from("encrypted"),
+  });
+  database.recordSecurityAudit(pluginManifest.id, "permission.granted", { permission: "network" });
+
+  database.removePlugin(pluginManifest.id);
+
+  assert.equal(database.getActivePlugin(pluginManifest.id), null);
+  assert.equal(database.listPermissionGrants(pluginManifest.id).length, 1);
+  assert.equal(database.getSecretByKey(pluginManifest.id, "api-key").secretRef, "secret-reference-0000000000000000");
+  assert.deepEqual(database.listSecurityAudit(pluginManifest.id)[0].details, { permission: "network" });
+  database.close();
+});
+
+test("security audit details are bounded and oversized records retain only a digest", (context) => {
+  const database = createDatabase(context);
+  database.recordSecurityAudit("com.example.test", "permission.denied", {
+    untrusted: "x".repeat(MAX_SECURITY_AUDIT_DETAILS_BYTES + 1),
+  });
+  const record = database.listSecurityAudit("com.example.test")[0];
+  assert.equal(record.details.truncated, true);
+  assert.match(record.details.sha256, /^[a-f0-9]{64}$/u);
+  assert.equal(Object.hasOwn(record.details, "untrusted"), false);
   database.close();
 });
 

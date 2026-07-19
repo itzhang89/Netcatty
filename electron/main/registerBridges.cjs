@@ -98,7 +98,7 @@ function createBridgeRegistrar(context) {
       env: process.env,
       createService: () => {
         const { createPluginHostService } = require("../plugins/hostService.cjs");
-        return createPluginHostService({ app, electron: electronModule });
+        return createPluginHostService({ app, electron: electronModule, safeStorage });
       },
       registerShutdown: (handler) => {
         const { registerPluginShutdown } = require("../plugins/shutdownCoordinator.cjs");

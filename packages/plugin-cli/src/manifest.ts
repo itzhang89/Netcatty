@@ -252,6 +252,11 @@ function validateSemantics(manifest: PluginManifest): string[] {
     "Setting contributions",
   );
   requirePermission(
+    Boolean(manifest.main.node),
+    "runtime.advanced",
+    "Node utility entrypoints",
+  );
+  requirePermission(
     Boolean(manifest.contributes?.commands?.length),
     "commands",
     "Command contributions",

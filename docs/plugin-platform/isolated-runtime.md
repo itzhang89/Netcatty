@@ -2,10 +2,12 @@
 
 Status: internal preview (`0.1.0-internal`)
 
-This document describes phase 2 of the plugin platform tracked by
+This document describes the isolated runtime introduced in phase 2 and secured
+by phase 3 of the plugin platform tracked by
 [#2269](https://github.com/binaricat/Netcatty/issues/2269). The runtime remains
 hidden behind `NETCATTY_PLUGIN_DEV=1`; there is no public settings entry or
-permission prompt yet.
+permission prompt yet. Without an injected host decision provider, every
+interactive capability request fails closed.
 
 ## Installation transaction
 
@@ -83,8 +85,10 @@ an activation loop.
 `plugins.sqlite` uses WAL, foreign keys, `synchronous=FULL`, explicit schema
 versions, and immediate transactions. It records installed versions, the active
 version, enabled state, runtime state, version-scoped crash history, and
-namespaced JSON key/value storage. Newer unknown database schemas fail closed.
-The plugin host has not shipped to users, so phase 2 defines one complete
+namespaced JSON key/value storage. The complete initial schema also keeps
+permission grants, OS-encrypted secret ciphertext, and bounded security audit
+records in user-owned tables with no package-version cascade. Newer unknown
+database schemas fail closed. The plugin host has not shipped to users, so it defines one complete
 initial schema at version 1 and has no migration chain. Pre-release phases may
 still revise that initial schema (or reset development-only databases); schema
 migrations begin only after a released build can have durable user data.
@@ -98,9 +102,9 @@ prior error/quarantine state.
 Explicit recovery clears only the active version's counter and preserves other
 retained versions' failure history.
 
-Permission grants, encrypted settings and secrets are deliberately absent from
-this phase. Those tables and brokers are introduced with the permission engine
-so phase 2 cannot accidentally treat a manifest declaration as authorization.
+Development databases created by an earlier pre-release schema must be reset;
+the project intentionally does not treat unpublished layouts as released
+migration sources.
 
 ## Runtime selection
 
@@ -139,8 +143,9 @@ arbitrary IPC channel.
 
 Before importing package code, the bootstrap removes direct fetch, XHR,
 WebSocket, WebTransport, WebRTC, beacon and worker globals. These APIs are not a
-substitute for a future network permission: ordinary plugins will use the
-phase-3 host broker when that permission is implemented.
+substitute for network permission: ordinary plugins use the phase-3 host broker,
+which authorizes each HTTP(S) origin, reauthorizes every redirect origin, omits
+ambient cookies, and bounds request and response bytes.
 
 ### Advanced utility runtime
 
@@ -164,10 +169,16 @@ remainder of the application process; a replacement activation is blocked
 until Netcatty restarts.
 
 The utility process is an isolation and failure-containment boundary, not the
-final permission boundary. Node plugins are still advanced code. Publisher
-trust, explicit advanced-runtime consent, resource grants, companion policy and
-quotas arrive in phases 3 and 9. This is one reason the entire runtime remains
-behind the local development gate.
+final permission boundary. Node plugins are still advanced code and must both
+declare and receive `runtime.advanced`. Phase 3 enforces that consent, scoped
+capability grants, companion digest policy and quotas. Phase 9 still adds
+publisher signatures and distribution trust. This is one reason the entire
+runtime remains behind the local development gate.
+
+`runtime.advanced` is consent to ambient Node, filesystem and network APIs in
+the contained utility process. It is not a promise that the fine-grained browser
+brokers can sandbox Node built-ins. Ordinary plugins remain broker-only; public
+advanced activation additionally depends on phase-9 verified publisher trust.
 
 ## RPC and streams
 
@@ -241,8 +252,10 @@ does not expose a permanently rejected manager as usable.
 
 Runtime logs are per-plugin, bounded and rotated. Structured fields whose names
 look like credentials, passwords, tokens, secrets or private keys are redacted.
-Secret storage is not emulated: the phase-2 SDK proxy rejects secret operations
-until the phase-3 secure broker exists.
+Secret values are encrypted through Electron `safeStorage`; the database and
+SDK retain only opaque references. Privileged host consumers receive one-use,
+operation/runtime/plugin-bound `SecretLease` objects rather than plaintext RPC
+results. See [security-and-permissions.md](security-and-permissions.md).
 
 Application quit is coordinated with plugin shutdown after Netcatty's dirty
 editor guard succeeds. Runtimes receive the two-second deactivation deadline;

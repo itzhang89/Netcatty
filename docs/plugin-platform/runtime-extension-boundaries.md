@@ -1,6 +1,6 @@
 # Plugin runtime extension boundaries
 
-Status: phase 2 internal architecture review
+Status: phase 3 internal architecture review
 
 This document records the host-runtime decisions that later plugin-platform
 phases are allowed to depend on. The goal is to keep permission, contribution,
@@ -14,7 +14,7 @@ remains `0.1.0-internal` until the phase-9 API 1.0 freeze.
 
 Every activation receives a new host-generated runtime ID. The identity used by
 host handlers contains the plugin ID, active version, runtime kind, package
-root, manifest, and logger. It is captured when the runtime starts and cannot be
+root, manifest, logger, and host-resolved security principal. It is captured when the runtime starts and cannot be
 supplied or replaced by plugin messages.
 
 The RPC registry adds this identity to every request, notification, middleware
@@ -25,6 +25,7 @@ grant to all of the following without trusting payload fields:
 - one activation (`runtimeId`) for once/session grants;
 - browser or advanced utility placement;
 - declared manifest permissions and resources;
+- the unsigned or later verified publisher security principal;
 - the request cancellation and deadline context.
 
 Host-to-plugin calls also verify that the recorded activation still matches the
@@ -202,13 +203,13 @@ new protocol route. Plugin packages still cannot add mappings themselves.
 
 ## Downstream phase matrix
 
-| Phase | Depends on phase-2 seam | Work intentionally left to that phase |
+| Phase | Stable seam available to the phase | Work owned by that phase |
 | --- | --- | --- |
-| PR 3 permissions | RPC middleware, immutable runtime identity, raw-message guard, placement resolver, runtime stop events | grants, resource canonicalization, secrets, credentials, companions, quotas |
+| PR 3 permissions | RPC middleware, immutable runtime identity, raw-message guard, placement/principal resolver, runtime stop events | principal-bound grants, resource canonicalization, secrets, credentials, companions, quotas (implemented) |
 | PR 4 contributions | host-to-plugin request/notify, runtime events, host module resources | activation-event policy, command/settings/view registries, UI SDK |
 | PR 5 terminal Providers | validated host requests, cancellation, lifecycle events | Provider ranking, deadlines, snapshots, built-in highlighter/autocomplete adapters |
 | PR 6 terminal pipeline | runtime identity and placement policy | direct MessagePort fast path, sensitive-input bypass, circuit breaker |
-| PR 7 connection/auth/import | requests, validated results, streams, crash containment | profiles, challenges, SecretLease, importer transactions |
+| PR 7 connection/auth/import | requests, validated results, streams, crash containment, `CredentialRef` resolver and `SecretLease` consumer | profiles, challenges, provider lease consumption, importer transactions |
 | PR 8 sync | streams, lifecycle identity, namespaced storage boundary | dynamic providers, encrypted sidecar, CRDT state and account baselines |
 | PR 9 distribution | retained immutable versions, compare-and-set restore, placement resolver, module resources | signatures, trust, health checks, audited update and user rollback policy, API 1.0 |
 
@@ -232,10 +233,11 @@ Phase 9 health checks and rollback must preserve this ordering instead of
 writing the active-version pointer directly.
 
 `plugin_kv` is runtime-owned local data and is removed by explicit uninstall.
-Future user settings, connection profiles, encrypted secrets, grants, and CRDT
-sidecar baselines are different ownership classes. Their tables must not use
-the phase-2 `plugin_kv` cascade when the product requirement says missing plugin
-code must preserve user or synchronized data.
+Phase-3 encrypted secrets, persistent grants and security audit already use
+separate non-cascade tables. Future user settings, connection profiles and CRDT
+sidecar baselines are the same user-owned class and must not be added to the
+`plugin_kv` cascade when missing plugin code must preserve user or synchronized
+data.
 
 Activation events are declared by the public manifest, but phase 2 starts
 enabled plugins eagerly only behind the development gate. Phase 4 owns the

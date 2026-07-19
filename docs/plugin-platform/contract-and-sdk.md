@@ -3,14 +3,17 @@
 Status: internal preview (`0.1.0-internal`)
 Tracking issue: [#2269](https://github.com/binaricat/Netcatty/issues/2269)
 
-Phase 2 now consumes this contract in the isolated host runtime. See
+Phases 2 and 3 consume this contract in the isolated host runtime and secure
+capability boundary. See
 [isolated-runtime.md](./isolated-runtime.md) for installation transactions,
-runtime placement, RPC routing, lifecycle and crash quarantine.
+runtime placement, RPC routing, lifecycle and crash quarantine, and
+[security-and-permissions.md](./security-and-permissions.md) for grants,
+credentials and host-mediated capabilities.
 
-This document describes the contract delivered by phase 1 of the plugin
-platform. It deliberately does not expose a plugin loader. Package installation,
-runtime isolation, permissions, UI contributions, terminal providers, connection
-providers, synchronization, and distribution are introduced by later phases.
+This document describes the canonical contract first delivered by phase 1 and
+extended before public release. Runtime loading and capability enforcement live
+in the host rather than the schema package. UI contributions, terminal and
+connection Providers, synchronization, and distribution remain later phases.
 
 ## Contract ownership
 
@@ -89,8 +92,9 @@ validation because JSON Schema cannot express these filesystem rules.
 Every entrypoint, view document, package icon, and companion variant must exist
 in the package.
 
-Browser and Node entrypoints express placement, not permission. The future
-runtime still evaluates the manifest permissions, trust level, and user grants
+Browser and Node entrypoints express placement. A Node entrypoint additionally
+requires the explicit high-risk `runtime.advanced` declaration and grant; the
+runtime still evaluates the remaining manifest permissions, trust level, and user grants
 before activating either entrypoint.
 
 Each advanced companion has a stable contribution ID and one or more platform
@@ -336,18 +340,24 @@ lifecycle primitives:
   host abort controllers;
 - `PluginError` carries a stable machine-readable error code and JSON details;
 - `PluginContext` exposes the exact Netcatty/API versions, negotiated feature
-  set, storage, opaque secret references, logging, and subscriptions.
+  set, storage, opaque secret references, credential leases, mediated network
+  and filesystem access, companion handles, logging, and subscriptions.
 
 `PluginSecretStore.get()` never returns plaintext. It returns a host-issued
 `SecretRef`, and `set()` immediately transfers a value already known to the
-plugin into host storage before returning the same kind of reference. Future
-network, authentication, and companion brokers consume the reference while the
-main process revalidates plugin ownership and operation scope. A `SecretRef` is
-an identifier, not a bearer capability, and must never bypass those checks.
+plugin into host storage before returning the same kind of reference. Network,
+authentication, and companion brokers can consume a one-use lease for the
+reference while the main process revalidates plugin ownership and operation
+scope. PR 7 may also supply a host-issued `CredentialRef` for Netcatty-owned
+Vault credentials through the same SDK method; its injected resolver does not
+materialize plaintext until lease consumption. Neither reference kind is a
+bearer capability, and neither may bypass permission, ownership, runtime, and
+operation checks.
 Host-rendered password settings likewise expose only references to plugin code.
 
-The context interfaces are contracts only in phase 1. The isolated host in
-phase 2 and capability brokers in phase 3 provide their implementations.
+The isolated host and phase-3 capability brokers provide these implementations.
+No renderer decision provider means requests fail closed; a manifest declaration
+never grants authority by itself.
 
 Permission names already use the phase-3 enforcement boundaries: clipboard
 read/write, terminal metadata/output/input and input/output interception, Vault
@@ -478,7 +488,7 @@ The cross-phase contract was checked against every planned consumer:
 | Phase | Contract used without importing application internals |
 | --- | --- |
 | PR 2 runtime | manifest header/full validation, `plugin.initialize`, JSON-RPC, progress, cancellation, framing, streams |
-| PR 3 security | plugin identity, permission declarations, RPC error mapping, deadlines and cancellation IDs |
+| PR 3 security | principal-bound grants, canonical resources, permission requests/decisions, `SecretRef`/`CredentialRef`/`SecretLeaseRef`, mediated SDK capabilities, stable failures and cancellation |
 | PR 4 contributions | namespaced settings, commands, menus, views and strict semantic references |
 | PR 5 terminal providers | namespaced provider IDs, provider request/result envelopes and bounded streams |
 | PR 6 data pipeline | MessagePort transfer envelopes, base64 stdio fallback, sequence and receive-window fields |

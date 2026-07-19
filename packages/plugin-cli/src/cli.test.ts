@@ -217,6 +217,20 @@ test("manifest validation reports permission and contribution mistakes", () => {
   assert.match(result.errors.join("\n"), /undeclared command/);
 });
 
+test("Node utility entrypoints require the explicit advanced-runtime permission", () => {
+  const missing = validateManifestValue(manifest({
+    main: { node: "dist/index.js" },
+  }));
+  assert.equal(missing.valid, false);
+  assert.match(missing.errors.join("\n"), /requires declared permission: runtime\.advanced/);
+
+  const declared = validateManifestValue(manifest({
+    main: { node: "dist/index.js" },
+    permissions: { required: ["runtime.advanced"] },
+  }));
+  assert.equal(declared.valid, true, declared.errors.join("\n"));
+});
+
 test("manifest byte parsing rejects invalid UTF-8 before JSON validation", () => {
   const validContents = new TextEncoder().encode(JSON.stringify(manifest()));
   assert.equal(parseAndValidateManifestContents(validContents).id, "com.example.package-test");

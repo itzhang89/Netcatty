@@ -374,6 +374,7 @@ test("uninstall disables lazy activation before stopping and removing code", asy
 test("concurrent shutdown callers share one complete shutdown operation", async () => {
   let databaseCloses = 0;
   let supervisorShutdowns = 0;
+  let beforeCloses = 0;
   const manager = new PluginManager({
     database: {
       close() { databaseCloses += 1; },
@@ -384,6 +385,7 @@ test("concurrent shutdown callers share one complete shutdown operation", async 
       async startEnabled() {},
       async shutdown() { supervisorShutdowns += 1; },
     },
+    async beforeClose() { beforeCloses += 1; },
   });
   await manager.initialize();
 
@@ -392,6 +394,23 @@ test("concurrent shutdown callers share one complete shutdown operation", async 
   assert.equal(first, second);
   await Promise.all([first, second]);
   assert.equal(supervisorShutdowns, 1);
+  assert.equal(beforeCloses, 1);
+  assert.equal(databaseCloses, 1);
+});
+
+test("shutdown closes the database even when secure-service cleanup fails", async () => {
+  let databaseCloses = 0;
+  const manager = new PluginManager({
+    database: {
+      close() { databaseCloses += 1; },
+      listPlugins: () => [],
+    },
+    packageStore: { async initialize() {} },
+    runtimeSupervisor: { async startEnabled() {}, async shutdown() {} },
+    async beforeClose() { throw new Error("secure cleanup failed"); },
+  });
+  await manager.initialize();
+  await assert.rejects(manager.shutdown(), /secure cleanup failed/);
   assert.equal(databaseCloses, 1);
 });
 

@@ -50,6 +50,11 @@ if (!process.versions.electron) {
       electron,
       appRoot: runtimeAppRoot,
       runtimeDirectory,
+      requestPermissionDecision: async (request) => ({
+        requestId: request.requestId,
+        decision: "allow",
+        scope: "application",
+      }),
     });
     await service.manager.initialize();
     for (const fixture of fixtures) {

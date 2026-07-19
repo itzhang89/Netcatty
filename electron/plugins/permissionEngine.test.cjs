@@ -1,0 +1,411 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const test = require("node:test");
+
+const { createDefinitionValidator } = require("./contractValidator.cjs");
+const { PluginDatabase } = require("./database.cjs");
+const { PluginPermissionEngine } = require("./permissionEngine.cjs");
+const {
+  canonicalizeNetworkOrigin,
+  defaultSecurityPrincipal,
+  permissionResourceCovers,
+} = require("./permissionResources.cjs");
+const { RPC_ERRORS } = require("./rpcRouter.cjs");
+
+function createDatabase(context) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-permissions-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  return new PluginDatabase(path.join(root, "plugins.sqlite"));
+}
+
+function manifest(permissions) {
+  return {
+    manifestVersion: 1,
+    id: "com.example.permissions",
+    name: "permissions",
+    version: "1.0.0",
+    publisher: "example",
+    engines: { netcatty: ">=0.0.0", api: ">=0.1.0-internal <0.2.0" },
+    main: { browser: "index.js" },
+    permissions,
+  };
+}
+
+function runtimeContext(pluginManifest, overrides = {}) {
+  return {
+    pluginId: pluginManifest.id,
+    pluginVersion: pluginManifest.version,
+    runtimeId: "runtime-1",
+    runtimeKind: "browser",
+    manifest: pluginManifest,
+    signal: new AbortController().signal,
+    ...overrides,
+  };
+}
+
+test("permission declarations are not grants and no renderer fails closed", async (context) => {
+  const database = createDatabase(context);
+  const engine = new PluginPermissionEngine({ database });
+  const pluginManifest = manifest({ required: ["storage"] });
+  await assert.rejects(
+    engine.authorize(runtimeContext(pluginManifest), {
+      permission: "storage",
+      resources: ["*"],
+      reason: "Use storage",
+    }),
+    (error) => error.code === RPC_ERRORS.permissionDenied,
+  );
+  assert.equal(database.listPermissionGrants(pluginManifest.id).length, 0);
+  assert.equal(database.listSecurityAudit(pluginManifest.id)[0].event, "permission.denied");
+  database.close();
+});
+
+test("always grants are declaration-bound and reusable until permission semantics change", async (context) => {
+  const database = createDatabase(context);
+  let prompts = 0;
+  const engine = new PluginPermissionEngine({
+    database,
+    requestDecision: async (request) => {
+      prompts += 1;
+      return { requestId: request.requestId, decision: "allow", scope: "always" };
+    },
+  });
+  const optional = manifest({ optional: ["storage"] });
+  const descriptor = { permission: "storage", resources: ["*"], reason: "Use storage" };
+  await engine.authorize(runtimeContext(optional), descriptor);
+  await engine.authorize(runtimeContext(optional), descriptor);
+  assert.equal(prompts, 1);
+  assert.equal(database.listPermissionGrants(optional.id).length, 1);
+
+  const required = manifest({ required: ["storage"] });
+  await engine.authorize(runtimeContext(required), descriptor);
+  assert.equal(prompts, 2, "optional-to-required changes require a fresh decision");
+  const newPublisher = { ...required, publisher: "different-publisher" };
+  await engine.authorize(runtimeContext(newPublisher), descriptor);
+  assert.equal(prompts, 3, "a different security principal requires a fresh decision");
+  database.close();
+});
+
+test("permission decisions cannot persist resources broader than the manifest declaration", async (context) => {
+  const database = createDatabase(context);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-declared-root-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, "file.txt");
+  fs.writeFileSync(file, "hello");
+  const engine = new PluginPermissionEngine({
+    database,
+    requestDecision: async (request) => ({
+      requestId: request.requestId,
+      decision: "allow",
+      scope: "always",
+      resources: [path.dirname(root)],
+    }),
+  });
+  const pluginManifest = manifest({ optional: [{
+    permission: "filesystem.read",
+    resources: [root],
+  }] });
+  await assert.rejects(engine.authorize(runtimeContext(pluginManifest), {
+    permission: "filesystem.read",
+    resources: [file],
+    reason: "Read file",
+  }), /exceeds the manifest declaration/);
+  assert.equal(database.listPermissionGrants(pluginManifest.id).length, 0);
+  database.close();
+});
+
+test("application grants can be listed and revoked for the permission UI", async (context) => {
+  const database = createDatabase(context);
+  let prompts = 0;
+  const engine = new PluginPermissionEngine({
+    database,
+    requestDecision: async (request) => {
+      prompts += 1;
+      return { requestId: request.requestId, decision: "allow", scope: "application" };
+    },
+  });
+  const pluginManifest = manifest({ optional: ["storage"] });
+  const descriptor = { permission: "storage", resources: ["*"], reason: "Storage" };
+  await engine.authorize(runtimeContext(pluginManifest), descriptor);
+  assert.equal(engine.listGrants(pluginManifest.id).application[0].permission, "storage");
+  engine.revokeApplication(pluginManifest.id, "storage", "*");
+  await engine.authorize(runtimeContext(pluginManifest), descriptor);
+  assert.equal(prompts, 2);
+  engine.revokeAll(pluginManifest.id);
+  assert.deepEqual(engine.listGrants(pluginManifest.id), {
+    always: [],
+    application: [],
+    session: [],
+  });
+  database.close();
+});
+
+test("permission decision provider failures are audited and fail closed", async (context) => {
+  const database = createDatabase(context);
+  const engine = new PluginPermissionEngine({
+    database,
+    requestDecision: async () => { throw new Error("renderer crashed"); },
+  });
+  const pluginManifest = manifest({ optional: ["storage"] });
+  await assert.rejects(engine.authorize(runtimeContext(pluginManifest), {
+    permission: "storage",
+    resources: ["*"],
+    reason: "Storage",
+  }), /decision provider failed/);
+  assert.equal(database.listSecurityAudit(pluginManifest.id)[0].details.reason, "decision-provider-failed");
+  database.close();
+});
+
+test("permission decision providers cannot bypass the canonical decision shape", async (context) => {
+  const database = createDatabase(context);
+  const pluginManifest = manifest({ optional: ["storage"] });
+  const descriptor = { permission: "storage", resources: ["*"], reason: "Storage" };
+  for (const decision of [
+    { decision: "allow", scope: "always", resources: { 0: "*", length: 1 } },
+    { decision: "allow", scope: "always", resources: Array(129).fill("*") },
+    { decision: "allow", scope: "always", resources: ["x".repeat(9_000)] },
+    { decision: "deny", scope: "always" },
+  ]) {
+    const engine = new PluginPermissionEngine({
+      database,
+      requestDecision: async (request) => ({ requestId: request.requestId, ...decision }),
+    });
+    await assert.rejects(engine.authorize(runtimeContext(pluginManifest), descriptor), /decision/);
+  }
+  assert.equal(database.listPermissionGrants(pluginManifest.id).length, 0);
+  database.close();
+});
+
+test("permission requests stay inside the canonical UI contract bounds", async (context) => {
+  const database = createDatabase(context);
+  let captured;
+  const engine = new PluginPermissionEngine({
+    database,
+    requestDecision: async (request) => {
+      captured = request;
+      return { requestId: request.requestId, decision: "deny" };
+    },
+  });
+  const pluginManifest = manifest({ optional: ["storage"] });
+  await assert.rejects(engine.authorize(runtimeContext(pluginManifest), {
+    permission: "storage",
+    resources: ["*"],
+    reason: "r".repeat(2_048),
+    operationId: `filesystem:${"p".repeat(2_048)}`,
+  }), /denied/);
+  assert.equal(captured.reason.length, 1_024);
+  assert.match(captured.operationId, /^sha256:[a-f0-9]{64}$/u);
+  assert.equal(Object.hasOwn(captured, "sessionId"), false);
+  assert.equal(Object.isFrozen(captured), true);
+  const validateRequest = createDefinitionValidator("PermissionRequest");
+  assert.equal(validateRequest(captured), true, JSON.stringify(validateRequest.errors));
+  await assert.rejects(engine.authorize(runtimeContext(pluginManifest), {
+    permission: "storage",
+    resources: Array(129).fill("*"),
+    reason: "Too many resources",
+  }), /resources are invalid/);
+  await assert.rejects(engine.authorize(runtimeContext(pluginManifest), {
+    permission: "storage",
+    resources: ["*"],
+    reason: "Invalid session",
+    sessionId: "bad\0session",
+  }), /session ID is invalid/);
+  database.close();
+});
+
+test("coalesced prompts do not widen a once decision to concurrent callers", async (context) => {
+  const database = createDatabase(context);
+  let prompts = 0;
+  const decisions = [];
+  const engine = new PluginPermissionEngine({
+    database,
+    requestDecision: (request) => {
+      prompts += 1;
+      return new Promise((resolve) => decisions.push(() => resolve({
+        requestId: request.requestId,
+        decision: "allow",
+        scope: "once",
+      })));
+    },
+  });
+  const pluginManifest = manifest({ optional: ["storage"] });
+  const descriptor = {
+    permission: "storage",
+    resources: ["*"],
+    reason: "Storage",
+    operationId: "storage:concurrent",
+  };
+  const first = engine.authorize(runtimeContext(pluginManifest), descriptor);
+  const second = engine.authorize(runtimeContext(pluginManifest), descriptor);
+  assert.equal(prompts, 1);
+  decisions.shift()();
+  await first;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(prompts, 2);
+  decisions.shift()();
+  await second;
+  database.close();
+});
+
+test("permission shutdown aborts pending prompts before grants can persist", async (context) => {
+  const database = createDatabase(context);
+  let resolveDecision;
+  const engine = new PluginPermissionEngine({
+    database,
+    requestDecision: (request) => new Promise((resolve) => {
+      resolveDecision = () => resolve({
+        requestId: request.requestId,
+        decision: "allow",
+        scope: "always",
+      });
+    }),
+  });
+  const pluginManifest = manifest({ optional: ["storage"] });
+  const pending = engine.authorize(runtimeContext(pluginManifest), {
+    permission: "storage",
+    resources: ["*"],
+    reason: "Storage",
+  });
+  engine.shutdown();
+  resolveDecision();
+  await assert.rejects(pending, /unavailable/);
+  assert.equal(database.listPermissionGrants(pluginManifest.id).length, 0);
+  database.close();
+});
+
+for (const scope of ["application", "session", "always"]) {
+test(`${scope} resource grants canonicalize origins and cover filesystem descendants`, async (context) => {
+  const database = createDatabase(context);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-permission-root-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const child = path.join(root, "child", "file.txt");
+  fs.mkdirSync(path.dirname(child), { recursive: true });
+  fs.writeFileSync(child, "hello");
+  let prompts = 0;
+  const engine = new PluginPermissionEngine({
+    database,
+    requestDecision: async (request) => {
+      prompts += 1;
+      return {
+        requestId: request.requestId,
+        decision: "allow",
+        scope,
+        resources: request.permission === "filesystem.read" ? [root] : request.resources,
+      };
+    },
+  });
+  const pluginManifest = manifest({ optional: ["network", "filesystem.read"] });
+  await engine.authorize(runtimeContext(pluginManifest), {
+    permission: "network",
+    resources: ["HTTPS://EXAMPLE.COM:443"],
+    reason: "Network",
+    ...(scope === "session" ? { sessionId: "terminal-session-1" } : {}),
+  });
+  if (scope === "always") {
+    assert.equal(database.listPermissionGrants(pluginManifest.id)[0].resource, "https://example.com");
+  }
+  await engine.authorize(runtimeContext(pluginManifest), {
+    permission: "filesystem.read",
+    resources: [child],
+    reason: "Read file",
+    ...(scope === "session" ? { sessionId: "terminal-session-1" } : {}),
+  });
+  const promptsBeforeDescendant = prompts;
+  await engine.authorize(runtimeContext(pluginManifest), {
+    permission: "filesystem.read",
+    resources: [child],
+    reason: "Read descendant again",
+    ...(scope === "session" ? { sessionId: "terminal-session-1" } : {}),
+  });
+  assert.equal(prompts, promptsBeforeDescendant);
+  assert.equal(permissionResourceCovers("filesystem.read", root, child), true);
+  assert.equal(permissionResourceCovers("filesystem.read", root, `${root}-outside`), false);
+  assert.equal(canonicalizeNetworkOrigin("https://example.com/"), "https://example.com");
+  assert.throws(() => canonicalizeNetworkOrigin("https://example.com/path"), /without credentials or a path/);
+  database.close();
+});
+}
+
+test("companion resources accept canonical contribution identifiers", () => {
+  const { canonicalizeCompanionResource } = require("./permissionResources.cjs");
+  assert.equal(
+    canonicalizeCompanionResource("com.example2.plugin.helper.process"),
+    "com.example2.plugin.helper.process",
+  );
+  assert.throws(() => canonicalizeCompanionResource("com.example"));
+  const pluginManifest = manifest({ optional: [] });
+  const firstPackage = defaultSecurityPrincipal(pluginManifest, "a".repeat(64));
+  const secondPackage = defaultSecurityPrincipal(pluginManifest, "b".repeat(64));
+  assert.notEqual(firstPackage, secondPackage, "unsigned package updates cannot inherit grants");
+  assert.match(firstPackage, /^unsigned-package:/u);
+});
+
+test("session grants require a host-owned session identifier", async (context) => {
+  const database = createDatabase(context);
+  const engine = new PluginPermissionEngine({
+    database,
+    requestDecision: async (request) => ({
+      requestId: request.requestId,
+      decision: "allow",
+      scope: "session",
+    }),
+  });
+  const pluginManifest = manifest({ optional: ["terminal.metadata"] });
+  await assert.rejects(engine.authorize(runtimeContext(pluginManifest), {
+    permission: "terminal.metadata",
+    resources: ["*"] ,
+    reason: "Read terminal metadata",
+  }), /host-owned session/);
+  await engine.authorize(runtimeContext(pluginManifest), {
+    permission: "terminal.metadata",
+    resources: ["*"],
+    reason: "Read terminal metadata",
+    sessionId: "terminal-session-1",
+  });
+  engine.revokeSession("terminal-session-1");
+  database.close();
+});
+
+test("required preflight grants non-resource permissions but defers concrete resource choices", async (context) => {
+  const database = createDatabase(context);
+  const requested = [];
+  const engine = new PluginPermissionEngine({
+    database,
+    requestDecision: async (request) => {
+      requested.push(request.permission);
+      return { requestId: request.requestId, decision: "allow", scope: "application" };
+    },
+  });
+  const pluginManifest = {
+    ...manifest({ required: ["runtime.advanced", "network"] }),
+    main: { node: "index.js" },
+  };
+  await engine.authorizeRequired({
+    id: pluginManifest.id,
+    activeVersion: pluginManifest.version,
+    manifest: pluginManifest,
+  });
+  assert.deepEqual(requested, ["runtime.advanced"]);
+  database.close();
+});
+
+test("permission middleware rejects unclassified methods and permits explicit public methods", async (context) => {
+  const database = createDatabase(context);
+  const engine = new PluginPermissionEngine({ database });
+  const middleware = engine.createMiddleware();
+  await assert.rejects(middleware({
+    pluginId: "com.example.permissions",
+    method: "unclassified.method",
+    metadata: {},
+  }, async () => null), /no authorization policy/);
+  assert.equal(await middleware({
+    pluginId: "com.example.permissions",
+    method: "log.write",
+    metadata: { public: true },
+  }, async () => "ok"), "ok");
+  database.close();
+});

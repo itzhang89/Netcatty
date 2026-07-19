@@ -5,6 +5,7 @@ class PluginManager {
     this.database = options.database;
     this.packageStore = options.packageStore;
     this.runtimeSupervisor = options.runtimeSupervisor;
+    this.beforeClose = options.beforeClose ?? null;
     this.initialized = false;
     this.initializePromise = null;
     this.mutationTail = Promise.resolve();
@@ -150,8 +151,13 @@ class PluginManager {
       try { await this.initializePromise; } catch {}
     }
     await supervisorShutdown;
-    this.database.close();
-    if (supervisorError) throw supervisorError;
+    const errors = supervisorError ? [supervisorError] : [];
+    try { await this.beforeClose?.(); }
+    catch (error) { errors.push(error); }
+    try { this.database.close(); }
+    catch (error) { errors.push(error); }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "Plugin host shutdown failed");
   }
 }
 

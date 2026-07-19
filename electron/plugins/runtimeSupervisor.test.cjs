@@ -82,6 +82,7 @@ test("supervisor prefers the ordinary browser runtime and enforces negotiated id
 
   const started = await fixture.supervisor.start(fixture.manifest.id);
   assert.deepEqual(started, fixture.supervisor.getRuntimeIdentity(fixture.manifest.id));
+  assert.match(started.securityPrincipal, /^unsigned-package:/u);
   assert.equal(Object.hasOwn(started, "request"), false);
   assert.equal(Object.hasOwn(started, "stop"), false);
   assert.equal(fixture.runtimeOptions[0].plugin.manifest.main.browser, "dist/browser.js");

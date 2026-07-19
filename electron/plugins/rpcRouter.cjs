@@ -18,9 +18,18 @@ const RPC_ERRORS = Object.freeze({
   invalidParams: -32602,
   internal: -32603,
   cancelled: -32001,
+  invalidArgument: -32003,
   deadlineExceeded: -32004,
+  notFound: -32005,
+  permissionDenied: -32007,
   resourceExhausted: -32008,
+  failedPrecondition: -32009,
+  aborted: -32010,
+  outOfRange: -32011,
+  unsupported: -32012,
   unavailable: -32014,
+  dataLoss: -32015,
+  unauthenticated: -32016,
 });
 
 class PluginRpcError extends Error {

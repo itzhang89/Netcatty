@@ -78,6 +78,7 @@ function normalizeRuntimeIdentity(identity) {
     runtimeId: identity.runtimeId,
     runtimeKind: identity.runtimeKind,
     ...(identity.manifest === undefined ? {} : { manifest: identity.manifest }),
+    ...(identity.securityPrincipal === undefined ? {} : { securityPrincipal: identity.securityPrincipal }),
     ...(identity.packageRoot === undefined ? {} : { packageRoot: identity.packageRoot }),
     ...(identity.logger === undefined ? {} : { logger: identity.logger }),
   });
@@ -109,6 +110,9 @@ class PluginHostRpcRegistry {
     if (options.validateParams != null) {
       assertHandler(options.validateParams, `Plugin host ${kind} parameter validator`);
     }
+    if (typeof options.authorization === "function") {
+      assertHandler(options.authorization, `Plugin host ${kind} authorization resolver`);
+    }
     if (this.requests.has(normalizedMethod) || this.notifications.has(normalizedMethod)) {
       throw new Error(`Plugin host RPC method is already registered: ${normalizedMethod}`);
     }
@@ -116,6 +120,11 @@ class PluginHostRpcRegistry {
       handler,
       metadata: cloneAndFreezeMetadata(options.metadata ?? {}),
       validateParams: options.validateParams ?? null,
+      authorization: typeof options.authorization === "function"
+        ? options.authorization
+        : options.authorization == null
+          ? null
+          : cloneAndFreezeMetadata(options.authorization),
     });
     collection.set(normalizedMethod, registration);
     this.revision += 1;
@@ -173,7 +182,7 @@ class PluginHostRpcRegistry {
       if (validatedParams && typeof validatedParams.then === "function") {
         throw new TypeError("Plugin host RPC parameter validators must be synchronous");
       }
-      const context = Object.freeze({
+      const authorizationContext = Object.freeze({
         ...transportContext,
         ...identity,
         assertActive,
@@ -181,6 +190,17 @@ class PluginHostRpcRegistry {
         method,
         metadata: registration.metadata,
         params: validatedParams,
+      });
+      const resolvedAuthorization = typeof registration.authorization === "function"
+        ? await registration.authorization(validatedParams, authorizationContext)
+        : registration.authorization;
+      const authorization = resolvedAuthorization == null
+        ? null
+        : cloneAndFreezeMetadata(resolvedAuthorization);
+      await assertActive();
+      const context = Object.freeze({
+        ...authorizationContext,
+        authorization,
       });
       let index = -1;
       const dispatch = async (nextIndex) => {
@@ -248,27 +268,31 @@ function createDefaultPluginHostRpcRegistry(options) {
     const value = options.database.getValue(context.pluginId, key);
     return value === undefined ? { found: false } : { found: true, value };
   }, {
-    metadata: { capability: "storage", mutating: false },
+    metadata: { capability: "storage", mutating: false, permission: "storage" },
+    authorization: { permission: "storage", resources: ["*"], reason: "Access plugin storage" },
     validateParams: (params) => options.assertStorageParams(params),
   });
   registry.registerRequest("storage.set", async ({ key, value }, context) => {
     options.database.setValue(context.pluginId, key, value);
     return null;
   }, {
-    metadata: { capability: "storage", mutating: true },
+    metadata: { capability: "storage", mutating: true, permission: "storage" },
+    authorization: { permission: "storage", resources: ["*"], reason: "Modify plugin storage" },
     validateParams: (params) => options.assertStorageParams(params, { value: true }),
   });
   registry.registerRequest("storage.delete", async ({ key }, context) => {
     options.database.deleteValue(context.pluginId, key);
     return null;
   }, {
-    metadata: { capability: "storage", mutating: true },
+    metadata: { capability: "storage", mutating: true, permission: "storage" },
+    authorization: { permission: "storage", resources: ["*"], reason: "Modify plugin storage" },
     validateParams: (params) => options.assertStorageParams(params),
   });
   registry.registerRequest("storage.keys", async (params, context) => {
     return { keys: options.database.listKeys(context.pluginId) };
   }, {
-    metadata: { capability: "storage", mutating: false },
+    metadata: { capability: "storage", mutating: false, permission: "storage" },
+    authorization: { permission: "storage", resources: ["*"], reason: "List plugin storage keys" },
     validateParams: (params) => {
       if (params && (typeof params !== "object" || Array.isArray(params) || Object.keys(params).length > 0)) {
         throw new TypeError("storage.keys does not accept parameters");
@@ -279,7 +303,7 @@ function createDefaultPluginHostRpcRegistry(options) {
   registry.registerNotification("log.write", async (params, context) => {
     if (!params || typeof params !== "object" || Array.isArray(params)) return;
     await context.logger.write(params.level, params.message, params.fields);
-  }, { metadata: { capability: "logging", mutating: false } });
+  }, { metadata: { capability: "logging", mutating: false, public: true } });
   return registry;
 }
 

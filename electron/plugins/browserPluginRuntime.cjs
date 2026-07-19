@@ -286,6 +286,11 @@ class BrowserPluginRuntime {
     return this.router.streams.openOutgoing(streamId, windowBytes);
   }
 
+  getProcessId() {
+    if (!this.window || this.window.isDestroyed()) return null;
+    return this.window.webContents.getOSProcessId?.() ?? null;
+  }
+
   #handleExit(error) {
     if (!this.router) return;
     const router = this.router;

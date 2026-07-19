@@ -10,5 +10,8 @@
   },
   "main": {
     "node": "index.js"
+  },
+  "permissions": {
+    "required": ["runtime.advanced", "storage"]
   }
 }

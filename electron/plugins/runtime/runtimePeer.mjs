@@ -123,6 +123,25 @@ function assertStorageKey(key) {
   return key;
 }
 
+function assertCredentialRef(credential) {
+  if (
+    !credential
+    || typeof credential !== "object"
+    || (credential.kind !== "secret" && credential.kind !== "credential")
+    || typeof credential.id !== "string"
+    || credential.id.length < 16
+    || credential.id.length > 256
+  ) throw new PluginError("invalid_argument", "Credential reference is invalid");
+  return { kind: credential.kind, id: credential.id };
+}
+
+function assertCompanionId(companionId) {
+  if (typeof companionId !== "string" || companionId.length < 5 || companionId.length > 192) {
+    throw new PluginError("invalid_argument", "Companion ID is invalid");
+  }
+  return companionId;
+}
+
 function createPluginContext(config, client) {
   const subscriptions = new DisposableStore();
   const storage = {
@@ -135,9 +154,63 @@ function createPluginContext(config, client) {
     keys: () => client.request("storage.keys", {}).then((result) => result?.keys ?? []),
   };
   const secrets = {
-    get: () => Promise.reject(new PluginError("unsupported", "Plugin secrets require the permission runtime")),
-    set: () => Promise.reject(new PluginError("unsupported", "Plugin secrets require the permission runtime")),
-    delete: () => Promise.reject(new PluginError("unsupported", "Plugin secrets require the permission runtime")),
+    get: (key) => client.request("secrets.get", { key: assertStorageKey(key) })
+      .then((result) => result?.found ? result.secret : undefined),
+    set: (key, value) => client.request("secrets.set", {
+      key: assertStorageKey(key),
+      value,
+    }).then((result) => result.secret),
+    delete: (key) => client.request("secrets.delete", { key: assertStorageKey(key) })
+      .then(() => undefined),
+  };
+  const credentials = {
+    createLease: (secret, options) => client.request("credentials.createLease", {
+      secret: assertCredentialRef(secret),
+      operationId: options?.operationId,
+      purpose: options?.purpose,
+      ...(options?.ttlMs === undefined ? {} : { ttlMs: options.ttlMs }),
+    }),
+  };
+  const network = {
+    request: (request) => client.request("network.request", request),
+  };
+  const filesystem = {
+    readFile: (filePath, options = {}) => client.request("filesystem.readFile", {
+      path: filePath,
+      ...options,
+    }).then((result) => result.data),
+    writeFile: (filePath, data, options = {}) => client.request("filesystem.writeFile", {
+      path: filePath,
+      data,
+      ...options,
+    }).then(() => undefined),
+    stat: (filePath) => client.request("filesystem.stat", { path: filePath }),
+    readDirectory: (directoryPath) => client.request("filesystem.readDirectory", { path: directoryPath })
+      .then((result) => result.entries),
+  };
+  const companions = {
+    start: async (companionId) => {
+      const result = await client.request("companion.start", {
+        companionId: assertCompanionId(companionId),
+      });
+      let stopped = false;
+      const stop = async () => {
+        if (stopped) return;
+        stopped = true;
+        await client.request("companion.stop", { handleId: result.handleId });
+      };
+      return Object.freeze({
+        id: result.handleId,
+        request: (method, params, options = {}) => client.request("companion.request", {
+          handleId: result.handleId,
+          method,
+          ...(params === undefined ? {} : { params }),
+          ...options,
+        }),
+        stop,
+        dispose() { void stop().catch(() => {}); },
+      });
+    },
   };
   const logger = Object.fromEntries(["debug", "info", "warn", "error"].map((level) => [
     level,
@@ -155,6 +228,10 @@ function createPluginContext(config, client) {
     subscriptions,
     storage,
     secrets,
+    credentials,
+    network,
+    filesystem,
+    companions,
     logger,
   };
 }

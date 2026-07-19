@@ -10,5 +10,8 @@
   },
   "main": {
     "browser": "index.js"
+  },
+  "permissions": {
+    "required": ["storage"]
   }
 }

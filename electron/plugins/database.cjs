@@ -1,10 +1,23 @@
 "use strict";
 
+const { createHash } = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 
 const SCHEMA_VERSION = 1;
+const MAX_SECURITY_AUDIT_DETAILS_BYTES = 16 * 1024;
+const MAX_SECURITY_AUDIT_RECORDS_PER_PLUGIN = 1_000;
+const REQUIRED_SCHEMA_COLUMNS = Object.freeze({
+  plugins: ["id", "enabled", "active_version", "installed_at", "updated_at"],
+  plugin_versions: ["plugin_id", "version", "manifest_json", "archive_sha256", "package_relative_path", "installed_at"],
+  plugin_runtime_state: ["plugin_id", "plugin_version", "status", "runtime_kind", "last_error", "quarantined_at", "updated_at"],
+  plugin_crashes: ["plugin_id", "plugin_version", "crashed_at"],
+  plugin_kv: ["plugin_id", "key", "value_json", "updated_at"],
+  plugin_permission_grants: ["plugin_id", "permission", "resource", "declaration_hash", "granted_at"],
+  plugin_secrets: ["plugin_id", "key", "secret_ref", "ciphertext", "created_at", "updated_at"],
+  plugin_security_audit: ["id", "plugin_id", "event", "details_json", "created_at"],
+});
 
 function parseJson(text, label) {
   try {
@@ -87,9 +100,49 @@ class PluginDatabase {
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (plugin_id, key)
           );
+          CREATE TABLE plugin_permission_grants (
+            plugin_id TEXT NOT NULL,
+            permission TEXT NOT NULL,
+            resource TEXT NOT NULL,
+            declaration_hash TEXT NOT NULL,
+            granted_at INTEGER NOT NULL,
+            PRIMARY KEY (plugin_id, permission, resource)
+          );
+          CREATE TABLE plugin_secrets (
+            plugin_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            secret_ref TEXT NOT NULL UNIQUE,
+            ciphertext BLOB NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (plugin_id, key)
+          );
+          CREATE INDEX plugin_secrets_ref_lookup
+            ON plugin_secrets(plugin_id, secret_ref);
+          CREATE TABLE plugin_security_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plugin_id TEXT NOT NULL,
+            event TEXT NOT NULL,
+            details_json TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+          );
+          CREATE INDEX plugin_security_audit_lookup
+            ON plugin_security_audit(plugin_id, created_at DESC);
           PRAGMA user_version = 1;
         `);
       });
+    }
+    this.#assertSchemaLayout();
+  }
+
+  #assertSchemaLayout() {
+    for (const [table, columns] of Object.entries(REQUIRED_SCHEMA_COLUMNS)) {
+      const actual = this.db.prepare(`PRAGMA table_info(${table})`).all().map(({ name }) => name);
+      if (JSON.stringify(actual) !== JSON.stringify(columns)) {
+        throw new Error(
+          "Pre-release plugin database schema is obsolete; reset userData/plugins/plugins.sqlite",
+        );
+      }
     }
   }
 
@@ -370,9 +423,152 @@ class PluginDatabase {
     ).all(pluginId).map((row) => row.key);
   }
 
+  listPermissionGrants(pluginId) {
+    return this.db.prepare(`
+      SELECT plugin_id, permission, resource, declaration_hash, granted_at
+      FROM plugin_permission_grants
+      WHERE plugin_id = ?
+      ORDER BY permission COLLATE BINARY, resource COLLATE BINARY
+    `).all(pluginId).map((row) => ({
+      pluginId: row.plugin_id,
+      permission: row.permission,
+      resource: row.resource,
+      declarationHash: row.declaration_hash,
+      grantedAt: Number(row.granted_at),
+    }));
+  }
+
+  upsertPermissionGrant(record) {
+    this.db.prepare(`
+      INSERT INTO plugin_permission_grants(
+        plugin_id, permission, resource, declaration_hash, granted_at
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(plugin_id, permission, resource) DO UPDATE SET
+        declaration_hash = excluded.declaration_hash,
+        granted_at = excluded.granted_at
+    `).run(
+      record.pluginId,
+      record.permission,
+      record.resource,
+      record.declarationHash,
+      this.clock(),
+    );
+  }
+
+  deletePermissionGrant(pluginId, permission, resource) {
+    this.db.prepare(`
+      DELETE FROM plugin_permission_grants
+      WHERE plugin_id = ? AND permission = ? AND resource = ?
+    `).run(pluginId, permission, resource);
+  }
+
+  deleteAllPermissionGrants(pluginId) {
+    this.db.prepare("DELETE FROM plugin_permission_grants WHERE plugin_id = ?").run(pluginId);
+  }
+
+  getSecretByKey(pluginId, key) {
+    const row = this.db.prepare(`
+      SELECT plugin_id, key, secret_ref, ciphertext, created_at, updated_at
+      FROM plugin_secrets WHERE plugin_id = ? AND key = ?
+    `).get(pluginId, key);
+    return row ? this.#mapSecret(row) : null;
+  }
+
+  getSecretByRef(pluginId, secretRef) {
+    const row = this.db.prepare(`
+      SELECT plugin_id, key, secret_ref, ciphertext, created_at, updated_at
+      FROM plugin_secrets WHERE plugin_id = ? AND secret_ref = ?
+    `).get(pluginId, secretRef);
+    return row ? this.#mapSecret(row) : null;
+  }
+
+  #mapSecret(row) {
+    return {
+      pluginId: row.plugin_id,
+      key: row.key,
+      secretRef: row.secret_ref,
+      ciphertext: Buffer.from(row.ciphertext),
+      createdAt: Number(row.created_at),
+      updatedAt: Number(row.updated_at),
+    };
+  }
+
+  upsertSecret(record) {
+    const now = this.clock();
+    this.db.prepare(`
+      INSERT INTO plugin_secrets(
+        plugin_id, key, secret_ref, ciphertext, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(plugin_id, key) DO UPDATE SET
+        secret_ref = excluded.secret_ref,
+        ciphertext = excluded.ciphertext,
+        updated_at = excluded.updated_at
+    `).run(
+      record.pluginId,
+      record.key,
+      record.secretRef,
+      record.ciphertext,
+      now,
+      now,
+    );
+  }
+
+  deleteSecret(pluginId, key) {
+    this.db.prepare("DELETE FROM plugin_secrets WHERE plugin_id = ? AND key = ?")
+      .run(pluginId, key);
+  }
+
+  recordSecurityAudit(pluginId, event, details) {
+    let detailsJson = JSON.stringify(details ?? {});
+    const originalBytes = Buffer.byteLength(detailsJson);
+    if (originalBytes > MAX_SECURITY_AUDIT_DETAILS_BYTES) {
+      detailsJson = JSON.stringify({
+        truncated: true,
+        originalBytes,
+        sha256: createHash("sha256").update(detailsJson).digest("hex"),
+      });
+    }
+    this.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO plugin_security_audit(plugin_id, event, details_json, created_at)
+        VALUES (?, ?, ?, ?)
+      `).run(pluginId, event, detailsJson, this.clock());
+      this.db.prepare(`
+        DELETE FROM plugin_security_audit
+        WHERE plugin_id = ? AND id NOT IN (
+          SELECT id FROM plugin_security_audit
+          WHERE plugin_id = ? ORDER BY id DESC LIMIT ${MAX_SECURITY_AUDIT_RECORDS_PER_PLUGIN}
+        )
+      `).run(pluginId, pluginId);
+    });
+  }
+
+  listSecurityAudit(pluginId, limit = 100) {
+    const requestedLimit = Number(limit);
+    const normalizedLimit = Math.max(1, Math.min(
+      1_000,
+      Number.isFinite(requestedLimit) ? Math.trunc(requestedLimit) : 100,
+    ));
+    return this.db.prepare(`
+      SELECT event, details_json, created_at
+      FROM plugin_security_audit
+      WHERE plugin_id = ? ORDER BY id DESC LIMIT ?
+    `).all(pluginId, normalizedLimit).map((row) => ({
+      event: row.event,
+      details: parseJson(row.details_json, "security audit entry"),
+      createdAt: Number(row.created_at),
+    }));
+  }
+
   close() {
     this.db.close();
   }
 }
 
-module.exports = { PluginDatabase, SCHEMA_VERSION };
+module.exports = {
+  MAX_SECURITY_AUDIT_DETAILS_BYTES,
+  MAX_SECURITY_AUDIT_RECORDS_PER_PLUGIN,
+  PluginDatabase,
+  REQUIRED_SCHEMA_COLUMNS,
+  SCHEMA_VERSION,
+};

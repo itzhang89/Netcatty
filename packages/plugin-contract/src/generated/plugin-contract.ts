@@ -31,6 +31,11 @@ export type ContextKeyExpression = string;
 
 export type ContributionId = string;
 
+export type CredentialRef = {
+  kind: "credential";
+  id: string;
+};
+
 export type FeatureId = string;
 
 export type IconReference = (ThemeIcon) | (PackageIcon);
@@ -83,7 +88,7 @@ export type PermissionDecision = ({
   requestId: string;
   decision: "allow";
   scope: PermissionGrantScope;
-  resources?: Array<string>;
+  resources?: Array<PermissionResource>;
 }) | ({
   requestId: string;
   decision: "deny" | "cancel";
@@ -91,7 +96,7 @@ export type PermissionDecision = ({
 
 export type PermissionDeclaration = (PluginPermission) | ({
   permission: PluginPermission;
-  resources: Array<string>;
+  resources: Array<PermissionResource>;
   reason?: string;
 });
 
@@ -100,11 +105,19 @@ export type PermissionGrantScope = "once" | "session" | "application" | "always"
 export type PermissionRequest = {
   requestId: string;
   pluginId: PluginId;
+  pluginVersion?: SemanticVersion;
+  pluginName?: string;
+  publisher?: string;
+  runtimeId?: string | null;
+  runtimeKind?: "browser" | "utility" | null;
   permission: PluginPermission;
-  resources?: Array<string>;
+  resources?: Array<PermissionResource>;
   reason: string;
   operationId?: string;
+  sessionId?: string;
 };
+
+export type PermissionResource = string;
 
 export type PermissionSet = {
   required?: Array<PermissionDeclaration>;
@@ -178,7 +191,7 @@ export type PluginManifestHeader = ({
   engines: PluginEngineHeader;
 } & Record<string, unknown>);
 
-export type PluginPermission = "storage" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
+export type PluginPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
 
 export type PluginWireErrorCode = -32001 | -32002 | -32003 | -32004 | -32005 | -32006 | -32007 | -32008 | -32009 | -32010 | -32011 | -32012 | -32013 | -32014 | -32015 | -32016;
 
@@ -330,6 +343,13 @@ export type RuntimeInitializeSuccess = {
 export type SafePositiveInteger = number;
 
 export type SafeUnsignedInteger = number;
+
+export type SecretLeaseRef = {
+  kind: "secret-lease";
+  id: string;
+  operationId: string;
+  expiresAt: SafePositiveInteger;
+};
 
 export type SecretRef = {
   kind: "secret";

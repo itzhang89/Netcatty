@@ -20,6 +20,13 @@ function createOptions(root, configureRpcRegistry) {
   };
 }
 
+function transportContext() {
+  return {
+    signal: new AbortController().signal,
+    logger: { write: async () => {} },
+  };
+}
+
 test("host RPC registry configuration is complete before runtime initialization", (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -48,11 +55,143 @@ test("async host RPC registry configuration fails before a service can start", (
 test("host service forwards the transport quota guard to the runtime supervisor", (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const runtimeMessageGuard = () => {};
+  let guarded;
+  const runtimeMessageGuard = (identity, message) => { guarded = { identity, message }; };
   const service = createPluginHostService({
     ...createOptions(root),
     runtimeMessageGuard,
   });
   context.after(() => service.database.close());
-  assert.equal(service.runtimeSupervisor.runtimeMessageGuard, runtimeMessageGuard);
+  const identity = { runtimeId: "runtime-1" };
+  const message = { jsonrpc: "2.0" };
+  service.runtimeSupervisor.runtimeMessageGuard(identity, message);
+  assert.deepEqual(guarded, { identity, message });
+});
+
+test("runtime trust placement precedes required and advanced permission prompts", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const events = [];
+  const service = createPluginHostService({
+    ...createOptions(root),
+    resolveRuntimeKind: async () => {
+      events.push("placement");
+      return "utility";
+    },
+    requestPermissionDecision: async (request) => {
+      events.push(`permission:${request.permission}`);
+      return { requestId: request.requestId, decision: "allow", scope: "application" };
+    },
+  });
+  context.after(() => service.manager.shutdown());
+  const manifest = {
+    manifestVersion: 1,
+    id: "com.example.advanced",
+    name: "advanced",
+    version: "1.0.0",
+    publisher: "example",
+    engines: { netcatty: ">=0.0.0", api: ">=0.1.0-internal <0.2.0" },
+    main: { node: "index.js" },
+    permissions: { required: ["runtime.advanced", "storage"] },
+  };
+  assert.equal(await service.runtimeSupervisor.resolveRuntimeKind({
+    plugin: { id: manifest.id, activeVersion: manifest.version, manifest },
+    availableKinds: ["utility"],
+    securityPrincipal: "verified:test-publisher-key",
+    signal: new AbortController().signal,
+  }), "utility");
+  assert.deepEqual(events, [
+    "placement",
+    "permission:storage",
+    "permission:runtime.advanced",
+  ]);
+});
+
+test("secure host methods fail closed without an approver while public logging remains available", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const service = createPluginHostService(createOptions(root));
+  context.after(() => service.manager.shutdown());
+  const routes = service.rpcRegistry.createRoutes({
+    pluginId: "com.example.service",
+    pluginVersion: "1.0.0",
+    runtimeId: "runtime-1",
+    runtimeKind: "browser",
+    manifest: {
+      id: "com.example.service",
+      name: "service",
+      publisher: "example",
+      permissions: { required: ["storage"] },
+    },
+  });
+  await assert.rejects(
+    routes.requestHandlers["storage.set"]({ key: "answer", value: 42 }, transportContext()),
+    /not granted/,
+  );
+  await routes.notificationHandlers["log.write"]({ level: "info", message: "hello" }, transportContext());
+  assert.equal(service.database.getValue("com.example.service", "answer"), undefined);
+});
+
+test("approved host capabilities reuse application grants through the registry", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  let prompts = 0;
+  const service = createPluginHostService({
+    ...createOptions(root),
+    requestPermissionDecision: async (request) => {
+      prompts += 1;
+      return { requestId: request.requestId, decision: "allow", scope: "application" };
+    },
+  });
+  context.after(() => service.manager.shutdown());
+  const pluginManifest = {
+    manifestVersion: 1,
+    id: "com.example.service",
+    name: "service",
+    version: "1.0.0",
+    publisher: "example",
+    engines: { netcatty: ">=0.0.0", api: ">=0.1.0-internal <0.2.0" },
+    main: { browser: "index.js" },
+    permissions: { required: ["storage"] },
+  };
+  service.database.installVersion({
+    pluginId: pluginManifest.id,
+    version: pluginManifest.version,
+    manifest: pluginManifest,
+    archiveSha256: "a".repeat(64),
+    packageRelativePath: "com.example.service/1.0.0/package",
+  });
+  const routes = service.rpcRegistry.createRoutes({
+    pluginId: "com.example.service",
+    pluginVersion: "1.0.0",
+    runtimeId: "runtime-1",
+    runtimeKind: "browser",
+    manifest: pluginManifest,
+  });
+  await routes.requestHandlers["storage.set"]({ key: "answer", value: 42 }, transportContext());
+  assert.deepEqual(
+    await routes.requestHandlers["storage.get"]({ key: "answer" }, transportContext()),
+    { found: true, value: 42 },
+  );
+  assert.equal(prompts, 1);
+});
+
+test("custom host methods without an explicit authorization classification are denied", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const service = createPluginHostService(createOptions(root, (registry) => {
+    registry.registerRequest("settings.get", () => ({ value: true }));
+  }));
+  context.after(() => service.manager.shutdown());
+  const routes = service.rpcRegistry.createRoutes({
+    pluginId: "com.example.service",
+    pluginVersion: "1.0.0",
+    runtimeId: "runtime-1",
+    runtimeKind: "browser",
+    manifest: { permissions: { optional: ["settings.read"] } },
+  });
+  await assert.rejects(
+    routes.requestHandlers["settings.get"]({}, transportContext()),
+    /no authorization policy/,
+  );
 });

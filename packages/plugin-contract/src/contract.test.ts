@@ -130,6 +130,7 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
   const permission = validator("PermissionRequest");
   const permissionDecision = validator("PermissionDecision");
   const secretRef = validator("SecretRef");
+  const credentialRef = validator("CredentialRef");
   const provider = validator("ProviderRequest");
   const providerResult = validator("ProviderResult");
 
@@ -323,10 +324,31 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
   assert.equal(permission({
     requestId: "p1",
     pluginId: "com.example.contract-test",
+    pluginVersion: "1.2.3",
+    pluginName: "Contract test",
+    publisher: "example",
+    runtimeId: "runtime-1",
+    runtimeKind: "browser",
     permission: "network",
     reason: "Fetch completion metadata",
     resources: ["https://api.example.com"],
+    operationId: "network:https://api.example.com",
+    sessionId: "terminal-session-1",
   }), true);
+  assert.equal(permission({
+    requestId: "p2",
+    pluginId: "com.example.contract-test",
+    permission: "filesystem.read",
+    reason: "Read a long absolute path",
+    resources: [`/${"a".repeat(4_096)}`],
+  }), true, JSON.stringify(permission.errors));
+  assert.equal(permission({
+    requestId: "p3",
+    pluginId: "com.example.contract-test",
+    permission: "network",
+    reason: "Reject unknown runtime placement",
+    runtimeKind: "renderer",
+  }), false);
   assert.equal(permissionDecision({ requestId: "p1", decision: "allow", scope: "once" }), true);
   assert.equal(permissionDecision({ requestId: "p1", decision: "allow" }), false);
   assert.equal(permissionDecision({ requestId: "p1", decision: "deny", scope: "always" }), false);
@@ -334,6 +356,8 @@ test("RPC, stream, permission, and provider schemas validate independently", () 
   assert.equal(secretRef({ kind: "secret", id: "short" }), false);
   assert.equal(secretRef({ kind: "secret", id: "secret-reference-1", value: "plaintext" }), false);
   assert.equal(secretRef({ kind: "credential", id: "secret-reference-1" }), false);
+  assert.equal(credentialRef({ kind: "credential", id: "credential-ref-1" }), true);
+  assert.equal(credentialRef({ kind: "secret", id: "credential-ref-1" }), false);
   assert.equal(provider({
     providerId: "com.example.contract-test.completion",
     operation: "provideCompletions",
@@ -443,6 +467,7 @@ test("permission and setting-control catalogs cover planned public surfaces", ()
     "vault.credentials",
     "sftp.write",
     "filesystem.write",
+    "runtime.advanced",
     "provider.connection",
     "provider.sync",
   ]) {

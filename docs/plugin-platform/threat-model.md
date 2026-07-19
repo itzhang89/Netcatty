@@ -1,6 +1,6 @@
 # Plugin platform threat model
 
-Status: phase 2 internal runtime
+Status: phase 3 internal security boundary
 
 Plugins are untrusted code. A useful plugin may parse terminal output, display
 content, call remote services, or ship a native companion; none of those needs
@@ -9,7 +9,8 @@ imply trust in the author's code, update server, dependencies, or account.
 This threat model records the security properties that the nine-stage platform
 must preserve. Phase 1 enforces package-format properties and defines the wire
 types. Phase 2 implements process isolation and lifecycle containment behind a
-development gate; later phases add capability mediation and distribution trust.
+development gate. Phase 3 adds capability mediation, scoped grants, encrypted
+secrets, companion containment and quotas; later phases add distribution trust.
 
 ## Protected assets
 
@@ -111,9 +112,11 @@ protocol with a restrictive Content Security Policy. The bootstrap removes
 direct fetch, socket, WebRTC, transport and worker globals before importing
 plugin code. Its isolated session is also offline behind an unreachable proxy,
 with non-proxied WebRTC disabled, so a fresh iframe global cannot restore
-network authority. Network access can only be added later through a checked
-host broker. Privileged plugins run in separate utility processes rather than
-the Netcatty main process.
+network authority. Ordinary browser plugins access the network only through the
+checked phase-3 host broker. An advanced utility plugin is an explicit high-risk
+exception: `runtime.advanced` consents to ambient Node, filesystem and network
+authority in a contained process. It never runs in the Netcatty main process,
+and phase 9 must additionally require verified publisher trust.
 
 ### Confused deputy
 
@@ -136,16 +139,20 @@ Secret values are never ordinary settings or JSON-RPC results. The credential
 broker uses operation-bound, single-use leases. Terminal sensitive-input mode
 bypasses third-party hooks unconditionally. Logs, diagnostics, synchronization,
 and crash reports redact secret fields before persistence.
-The SDK secret store returns an opaque `SecretRef`, never stored plaintext. The
-reference is not treated as a bearer capability: every privileged use must
-revalidate the calling plugin, resource ownership, permission, and operation.
+The SDK secret store returns an opaque `SecretRef`, never stored plaintext.
+Netcatty-owned Vault material uses a distinct opaque `CredentialRef`; its
+main-process resolver validates availability without materializing plaintext,
+then resolves only while consuming an operation-bound lease. Neither reference
+is treated as a bearer capability: every privileged use must revalidate the
+calling plugin, resource ownership, permission, runtime, and operation.
 
 ### Denial of service
 
 RPC requests have deadlines and cancellation IDs. Streams have explicit byte
-windows. The phase-2 supervisor enforces activation and shutdown deadlines,
-bounded pending work, bounded logs, and crash quarantine. Later permission and
-terminal phases add CPU/memory/rate quotas and interceptor circuit breakers. A
+windows. The supervisor enforces activation and shutdown deadlines, bounded
+pending work, bounded logs, crash quarantine, raw-message/capability/byte
+quotas, and CPU/memory monitoring for runtimes and companions. Later terminal
+phases add interceptor circuit breakers. A
 failed plugin must not stop unrelated plugins or terminal sessions.
 
 RPC control JSON is capped at 1 MiB. Stream frames use a separate 24 MiB JSON
@@ -210,9 +217,31 @@ Phase 2 implements package installation, isolated browser and utility-process
 runtimes, bounded RPC/streams, lifecycle deadlines and crash quarantine. These
 paths remain disabled unless `NETCATTY_PLUGIN_DEV=1` is set. The browser path
 has no ambient Node, Electron, filesystem or network authority. The Node path is
-explicitly an advanced runtime and is not considered safe for public enablement
-until later phases add permission enforcement and signed trust policy.
+explicitly an advanced runtime and remains behind the development gate until
+phase 9 adds signed trust policy.
 
-The phase does not synthesize grants or secret storage. Calls that would need
-those facilities fail closed, preserving the distinction between a manifest
-declaration, a future user grant, and actual host authority.
+## Phase 3 capability boundary
+
+Phase 3 installs the permission engine at the final host RPC boundary. A
+declaration is never a grant. `once`, host-session, application, and persistent
+grants share canonical resource-coverage rules and are bound to a declaration
+hash plus a host-resolved security principal. The current unsigned principal is
+derived from plugin ID, publisher, and immutable package SHA-256; phase 9 can replace it with a verified
+publisher-key identity through the placement resolver without changing grant
+semantics. A new principal or changed required/resource declaration requires a
+new decision.
+
+Network access is origin-scoped, cookie-free and redirect-by-redirect. File
+access is absolute-realpath scoped and binds the path authorized by middleware
+to the object used by the handler. Companion executables are package-contained,
+digest-verified immediately before shell-free spawn, host-RPC clients only, and
+must be reaped before their handle is released. Failure to contain a companion
+disables its plugin.
+
+Secret plaintext is encrypted by Electron `safeStorage` and never returned by
+ordinary secret RPC. A credential consumer must redeem a one-use lease bound to
+plugin, runtime, operation, abort signal and a maximum 60-second lifetime.
+Transport, capability, log, byte, process-count, pending-call, memory and CPU
+quotas contain abusive runtimes and companions. The capability boundary remains
+disabled unless `NETCATTY_PLUGIN_DEV=1` is set, and without a renderer decision
+provider interactive permission requests fail closed.

@@ -4,6 +4,9 @@ const path = require("node:path");
 
 const { PLUGIN_API_VERSION } = require("./constants.cjs");
 const { PluginDatabase } = require("./database.cjs");
+const { PluginCompanionSupervisor } = require("./companionSupervisor.cjs");
+const { PluginCredentialBroker, assertLeaseParams } = require("./credentialBroker.cjs");
+const { PluginFilesystemBroker } = require("./filesystemBroker.cjs");
 const { createDefaultPluginHostRpcRegistry } = require("./hostRpcRegistry.cjs");
 const {
   createDefaultPluginModuleResources,
@@ -13,8 +16,23 @@ const {
 const { PackageStore } = require("./packageStore.cjs");
 const { createPluginPaths } = require("./paths.cjs");
 const { PluginManager } = require("./pluginManager.cjs");
+const { PluginNetworkBroker } = require("./networkBroker.cjs");
+const { PluginPermissionEngine } = require("./permissionEngine.cjs");
 const { PluginProtocol } = require("./pluginProtocol.cjs");
 const { RuntimeSupervisor, assertStorageParams } = require("./runtimeSupervisor.cjs");
+const { PluginQuotaManager } = require("./quotaManager.cjs");
+const { registerSecurePluginCapabilities } = require("./secureCapabilities.cjs");
+const { PluginSecretStore } = require("./secretStore.cjs");
+const { SecretLeaseStore } = require("./secretLease.cjs");
+
+function getElectronProcessMetrics(app, pid) {
+  const metric = app.getAppMetrics?.().find((candidate) => candidate.pid === pid);
+  if (!metric) return null;
+  return {
+    cpuPercent: Number(metric.cpu?.percentCPUUsage ?? 0),
+    memoryBytes: Number(metric.memory?.workingSetSize ?? 0) * 1024,
+  };
+}
 
 function createPluginHostService(options) {
   const paths = createPluginPaths(options.app.getPath("userData"));
@@ -36,15 +54,96 @@ function createPluginHostService(options) {
       runtimeDirectory,
       moduleResources,
     });
+    const permissionEngine = new PluginPermissionEngine({
+      database,
+      requestDecision: options.requestPermissionDecision,
+    });
+    const quotaManager = new PluginQuotaManager({
+      getProcessMetrics: options.getProcessMetrics
+        ?? ((pid) => getElectronProcessMetrics(options.app, pid)),
+      quotas: options.quotas,
+    });
+    const secretStore = new PluginSecretStore({
+      database,
+      safeStorage: options.safeStorage ?? options.electron.safeStorage,
+    });
+    const leaseStore = new SecretLeaseStore({ secretStore });
+    const credentialBroker = new PluginCredentialBroker({
+      secretStore,
+      leaseStore,
+      credentialResolver: options.credentialResolver,
+    });
+    const filesystemBroker = new PluginFilesystemBroker({ quotaManager });
+    const networkBroker = new PluginNetworkBroker({
+      fetch: options.fetch ?? (options.electron.net?.fetch
+        ? (...args) => options.electron.net.fetch(...args)
+        : undefined),
+      permissionEngine,
+      quotaManager,
+    });
+    let runtimeSupervisor;
+    const companionSupervisor = new PluginCompanionSupervisor({
+      paths,
+      quotaManager,
+      spawn: options.spawnCompanion,
+      onContainmentFailure: (identity, error) => (
+        runtimeSupervisor?.enforcePolicyViolation(identity, error)
+      ),
+    });
     const rpcRegistry = options.rpcRegistry ?? createDefaultPluginHostRpcRegistry({
       assertStorageParams,
       database,
+    });
+    registerSecurePluginCapabilities(rpcRegistry, {
+      assertLeaseParams,
+      companionSupervisor,
+      credentialBroker,
+      filesystemBroker,
+      networkBroker,
+      permissionEngine,
+      quotaManager,
+      secretStore,
     });
     const configuredRegistry = options.configureRpcRegistry?.(rpcRegistry);
     if (configuredRegistry && typeof configuredRegistry.then === "function") {
       throw new TypeError("Plugin host RPC registry configuration must be synchronous");
     }
-    const runtimeSupervisor = new RuntimeSupervisor({
+    const requestedRuntimeResolver = options.resolveRuntimeKind ?? (({ plugin }) => (
+      plugin.manifest.main.browser ? "browser" : "utility"
+    ));
+    const resolveRuntimeKind = async (context) => {
+      const kind = await requestedRuntimeResolver(context);
+      if (
+        (kind !== "browser" && kind !== "utility")
+        || !context.availableKinds.includes(kind)
+      ) throw new Error(`Plugin runtime selection is unavailable: ${String(kind)}`);
+      await permissionEngine.authorizeRequired(context.plugin, {
+        securityPrincipal: context.securityPrincipal,
+        signal: context.signal,
+        skipPermissions: ["runtime.advanced"],
+      });
+      if (kind === "utility") {
+        await permissionEngine.authorize({
+          pluginId: context.plugin.id,
+          pluginVersion: context.plugin.activeVersion,
+          runtimeId: null,
+          manifest: context.plugin.manifest,
+          securityPrincipal: context.securityPrincipal,
+          signal: context.signal,
+        }, {
+          permission: "runtime.advanced",
+          resources: ["*"],
+          reason: "Start an advanced runtime with full Node, filesystem, and network authority",
+          operationId: `runtime.advanced:${context.plugin.activeVersion}`,
+        });
+      }
+      return kind;
+    };
+    const runtimeMessageGuard = (identity, message) => {
+      quotaManager.guardMessage(identity, message);
+      return options.runtimeMessageGuard?.(identity, message);
+    };
+    runtimeSupervisor = new RuntimeSupervisor({
       electron: options.electron,
       database,
       packageStore,
@@ -56,20 +155,48 @@ function createPluginHostService(options) {
       runtimeDirectory,
       appRoot,
       rpcRegistry,
-      resolveRuntimeKind: options.resolveRuntimeKind,
-      runtimeMessageGuard: options.runtimeMessageGuard,
+      resolveRuntimeKind,
+      resolveSecurityPrincipal: options.resolveSecurityPrincipal,
+      runtimeMessageGuard,
+      runtimeResourceMonitor: quotaManager,
       utilityModuleMappings: options.utilityModuleMappings ?? createUtilityModuleMappings(moduleResources),
     });
-    const manager = new PluginManager({ database, packageStore, runtimeSupervisor });
-    return {
+    quotaManager.setViolationHandler((identity, error) => (
+      runtimeSupervisor.enforcePolicyViolation(identity, error)
+    ));
+    runtimeSupervisor.onDidChangeRuntime((event) => {
+      if (!event.runtimeId || event.status === "running" || event.status === "starting") return;
+      leaseStore.revokeRuntime(event.runtimeId);
+      void companionSupervisor.releaseRuntime(event.runtimeId);
+    });
+    const manager = new PluginManager({
       database,
+      packageStore,
+      runtimeSupervisor,
+      beforeClose: async () => {
+        await companionSupervisor.shutdown();
+        leaseStore.shutdown();
+        permissionEngine.shutdown();
+        quotaManager.shutdown();
+      },
+    });
+    return {
+      companionSupervisor,
+      credentialBroker,
+      database,
+      filesystemBroker,
+      leaseStore,
       manager,
       moduleResources,
       packageStore,
       paths,
       protocol,
+      networkBroker,
+      permissionEngine,
+      quotaManager,
       rpcRegistry,
       runtimeSupervisor,
+      secretStore,
     };
   } catch (error) {
     database.close();
@@ -77,4 +204,4 @@ function createPluginHostService(options) {
   }
 }
 
-module.exports = { createPluginHostService };
+module.exports = { createPluginHostService, getElectronProcessMetrics };

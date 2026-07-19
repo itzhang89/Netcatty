@@ -202,6 +202,10 @@ class UtilityPluginRuntime {
     return this.router.streams.openOutgoing(streamId, windowBytes);
   }
 
+  getProcessId() {
+    return this.child?.pid ?? null;
+  }
+
   #beginTermination(error) {
     this.terminationError ??= error;
     const router = this.router;
