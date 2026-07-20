@@ -53,10 +53,10 @@ devices, workspaces, hosts, and sessions and requires the user to select an
 explicit target before editing a contextual value. It never reads or writes an
 ambiguous record. Each main window owns its catalog contribution; the host
 merges those contributions for the standalone settings window and withdraws a
-window's targets when its renderer closes. Font settings use the host font picker, while list and table
-settings use recursive schema-driven native controls rather than editable JSON.
-Settings and
-restored view state are user-owned records with no foreign-key
+window's targets when its renderer closes. Font settings use the host font
+picker, while list and table settings use recursive schema-driven native
+controls rather than editable JSON. Settings and restored view state are
+user-owned records with no foreign-key
 cascade to installed package versions, so uninstall does not erase them. The
 platform is unreleased, so both tables are part of the complete schema at
 `user_version = 1`; there is no migration chain.
@@ -147,6 +147,15 @@ top-tab model, including neighbor activation, middle-click and Cmd/Ctrl+W close,
 and close-others/right/all actions. They do not fall through to the overlay
 surface used by non-tab locations.
 
+The application-state lifecycle module combines a directly tested controller
+for active and retained instances, in-flight open tokens, early-close tombstones,
+and explicit-close handling with a hook that owns tab-catalog reconciliation,
+bounds, keyboard dispatch, and environment publication. The React component is
+rendering glue only. Contribution query changes expose a fail-closed empty
+snapshot while loading, but cannot mutate the native tab catalog until the
+matching query completes; opening or switching a tab therefore cannot withdraw
+an unconditional plugin tab during its own context refresh.
+
 The preload exposes only `postMessage`, same-plugin `executeCommand`, state
 get/set, runtime messages, and environment changes. It caches environment
 updates before view code subscribes and uses an owner-checked getter as a
@@ -159,8 +168,10 @@ value boundary rather than relying on `JSON.stringify` coercion.
 Localized manifest text is resolved by exact locale, language base, English,
 default, then the first declared value. Native contribution labels are plain
 text. A localized snapshot refresh preserves the existing owner-bound view and
-native tab while labels reload; a host-context change still fails closed
-synchronously. Open custom views receive locale, light/dark/system theme identity,
+native tab while labels reload; host-context changes still fail closed
+synchronously for context-gated actions and views, while native tab-catalog
+mutation waits for the matching query to finish. Open custom views receive
+locale, light/dark/system theme identity,
 host-owned CSS color tokens, reduced-motion preference, forced/high-contrast
 preference, and subsequent environment changes. Theme-token mutations and
 accessibility media-query changes are observed while the host is open, rather

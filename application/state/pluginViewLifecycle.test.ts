@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  PluginViewLifecycleController,
   consumeClosedPluginViewInstance,
+  reconcilePluginViewTabCatalog,
   markPluginViewOpenTokensClosed,
   reconcileClosedPluginView,
   rememberClosedPluginViewInstance,
@@ -11,6 +13,7 @@ import {
   withdrawPluginViewTab,
   type HostedPluginViewState,
 } from './pluginViewLifecycle.ts';
+import { PluginViewTabStore } from './pluginViewTabStore.ts';
 
 function view(id: string, tabId?: string): HostedPluginViewState {
   return {
@@ -133,20 +136,78 @@ test('locale-only snapshot refresh keeps the owned view alive without weakening 
   }), null);
 });
 
-test('native tab catalog reconciliation pauses only for same-context localized reloads', () => {
+test('native tab catalog reconciliation pauses for every in-flight query', () => {
   assert.equal(shouldReconcilePluginViewTabCatalog({
     loading: true,
-    currentContextKey: 'same',
-    loadedContextKey: 'same',
   }), false);
   assert.equal(shouldReconcilePluginViewTabCatalog({
-    loading: true,
-    currentContextKey: 'new',
-    loadedContextKey: 'old',
-  }), true);
-  assert.equal(shouldReconcilePluginViewTabCatalog({
     loading: false,
-    currentContextKey: 'same',
-    loadedContextKey: 'same',
   }), true);
+});
+
+test('active-tab context refresh cannot withdraw the plugin tab that triggered it', () => {
+  let activeTabId = 'vault';
+  const store = new PluginViewTabStore({
+    getActiveTabId: () => activeTabId,
+    setActiveTabId: (next) => { activeTabId = next; },
+  });
+  const tab = store.open({
+    pluginId: 'publisher.plugin',
+    pluginName: 'Plugin',
+    viewId: 'publisher.plugin.view',
+    title: 'View',
+  });
+
+  assert.equal(reconcilePluginViewTabCatalog({
+    loading: true,
+    plugins: [],
+    store,
+  }), false);
+  assert.deepEqual(store.getTabs().map((candidate) => candidate.id), [tab.id]);
+  assert.equal(activeTabId, tab.id);
+
+  const plugins = [{
+    id: 'publisher.plugin',
+    displayName: 'Plugin',
+    views: [{
+      id: 'publisher.plugin.view',
+      title: 'Localized View',
+      location: 'tab',
+    }],
+  }] as unknown as NetcattyPluginContributionSnapshot['plugins'];
+  assert.equal(reconcilePluginViewTabCatalog({
+    loading: false,
+    plugins,
+    store,
+  }), true);
+  assert.deepEqual(store.getTabs().map((candidate) => candidate.id), [tab.id]);
+  assert.equal(store.getTabs()[0]?.title, 'Localized View');
+  assert.equal(activeTabId, tab.id);
+});
+
+test('lifecycle controller owns retained views, open tokens, tombstones, and teardown', () => {
+  const controller = new PluginViewLifecycleController<HostedPluginViewState>();
+  const tabId = 'plugin-view:publisher.plugin:view.shared';
+  const active = view('active', tabId);
+  const retained = view('retained');
+  controller.setCurrent(active);
+  controller.retain('window:main\0view.retained', retained);
+
+  const token = controller.beginOpen({
+    viewKey: 'window:main\0view.active',
+    tabId,
+  });
+  const closed = controller.handleTabClose(tabId);
+  assert.deepEqual(closed.instanceIds, [active.id]);
+  assert.equal(controller.shouldCloseOpen(token), true);
+  controller.finishOpen({ token, viewKey: 'window:main\0view.active', tabId });
+  assert.equal(controller.shouldCloseOpen(token), false);
+
+  const early = controller.handleHostClose('instance-before-open-response');
+  assert.equal(early.matchedCurrent, false);
+  assert.equal(early.matchedRetained, false);
+  assert.equal(controller.consumeHostClose('instance-before-open-response'), true);
+
+  assert.deepEqual(controller.drain().map((candidate) => candidate.id), [retained.id]);
+  assert.equal(controller.getCurrent(), null);
 });
