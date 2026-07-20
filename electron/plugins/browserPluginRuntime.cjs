@@ -179,7 +179,7 @@ class BrowserPluginRuntime {
     this.port = port1;
     this.router = new PluginRpcRouter({
       pluginId: this.plugin.id,
-      send: (message) => port1.postMessage(message),
+      send: (message, transfer = []) => port1.postMessage(message, transfer),
       requestHandlers: this.requestHandlers,
       notificationHandlers: this.notificationHandlers,
       onBeforeMessage: this.onBeforeMessage,

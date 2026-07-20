@@ -39,6 +39,9 @@ Providers receive immutable metadata snapshots containing only stable session
 identity and presentation context: session/host/workspace IDs, protocol,
 connection status, cwd, title, shell type, dimensions, and alternate-screen
 state. Active runtimes can subscribe with `context.terminals.onDidChange()`.
+Protocol values preserve the actual built-in transport (`ssh`, `mosh`, `et`,
+`telnet`, `local`, or `serial`) and accept bounded namespaced identifiers for
+future connection Providers instead of collapsing non-SSH transports to SSH.
 Immediately before an invocation, a lazily activated Provider receives a
 `snapshot` event for the current session so it does not depend on lifecycle
 events that occurred before activation.

@@ -407,7 +407,7 @@ declare global {
     sessionId: string;
     hostId?: string;
     workspaceId?: string;
-    protocol: 'ssh' | 'telnet' | 'local' | 'serial';
+    protocol: string;
     status: 'connecting' | 'connected' | 'disconnected';
     cwd?: string;
     title?: string;

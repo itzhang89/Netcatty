@@ -58,9 +58,11 @@ export function transitionPluginTerminalConnectionState(
   });
 }
 
-function normalizeProtocol(protocol: string | undefined): NetcattyTerminalSessionSnapshot['protocol'] {
-  if (protocol === 'telnet' || protocol === 'local' || protocol === 'serial') return protocol;
-  return 'ssh';
+export function normalizePluginTerminalProtocol(
+  protocol: string | undefined,
+): NetcattyTerminalSessionSnapshot['protocol'] {
+  const normalized = protocol?.trim();
+  return normalized || 'ssh';
 }
 
 function normalizeShellType(shellType: string | undefined): NetcattyTerminalSessionSnapshot['shellType'] | undefined {
@@ -85,7 +87,7 @@ export function usePluginTerminalSessionLifecycle(options: PluginTerminalSession
       sessionId: metadata.sessionId,
       ...(metadata.hostId ? { hostId: metadata.hostId } : {}),
       ...(metadata.workspaceId ? { workspaceId: metadata.workspaceId } : {}),
-      protocol: normalizeProtocol(metadata.protocol),
+      protocol: normalizePluginTerminalProtocol(metadata.protocol),
       status: metadata.status,
       ...(state.cwd ? { cwd: state.cwd } : {}),
       ...(state.title ? { title: state.title } : {}),

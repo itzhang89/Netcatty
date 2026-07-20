@@ -180,6 +180,31 @@ test("terminal Provider invocation lazily activates, forwards deadlines, and fre
   ]]);
 });
 
+test("terminal session snapshots preserve built-in and namespaced protocol identities", async () => {
+  for (const protocol of ["mosh", "et", "com.example.transport"]) {
+    const { service } = setup();
+    const result = await service.provide({
+      kind: "terminal.completion",
+      operation: "provideCompletions",
+      session: { ...session, protocol },
+      payload: { input: "git" },
+    });
+    assert.equal(result[0].status, "ok");
+  }
+});
+
+test("terminal session snapshots reject malformed protocol identities", async () => {
+  const { service } = setup();
+  await assert.rejects(
+    service.provide({
+      kind: "terminal.completion",
+      operation: "provideCompletions",
+      session: { ...session, protocol: "bad protocol" },
+    }),
+    /protocol is invalid/,
+  );
+});
+
 test("terminal Provider invocation rejects kind drift and malformed or oversized results", async () => {
   const mismatch = setup();
   await assert.rejects(

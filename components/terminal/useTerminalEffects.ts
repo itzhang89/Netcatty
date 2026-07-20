@@ -190,10 +190,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       setPluginDecorationRules(Object.freeze([]));
       return;
     }
-    const protocol: NetcattyTerminalSessionSnapshot['protocol'] =
-      host.protocol === 'telnet' || host.protocol === 'local' || host.protocol === 'serial'
-        ? host.protocol
-        : 'ssh';
+    const protocol: NetcattyTerminalSessionSnapshot['protocol'] = host.protocol ?? 'ssh';
     try {
       const response = await pluginTerminalRegistry.request({
         kind: 'terminal.decoration',

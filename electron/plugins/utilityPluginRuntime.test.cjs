@@ -38,14 +38,16 @@ test("utility runtime launches without a shell using a minimal environment", asy
   fs.writeFileSync(path.join(packageRoot, "dist/index.js"), "export default {};\n");
   let forkOptions;
   const messages = [];
+  const transferLists = [];
   class FakeChild extends EventEmitter {
     constructor() {
       super();
       this.stdout = new EventEmitter();
       this.stderr = new EventEmitter();
     }
-    postMessage(message) {
+    postMessage(message, transfer = []) {
       messages.push(message);
+      transferLists.push(transfer);
       if (message.type === "netcatty-plugin:bootstrap") {
         queueMicrotask(() => this.emit("message", { type: "netcatty-plugin:ready" }));
       } else if (message.method === "plugin.initialize") {
@@ -101,6 +103,9 @@ test("utility runtime launches without a shell using a minimal environment", asy
   assert.deepEqual(messages.find((message) => message.method === "plugin.activate").params, {
     environment: { locale: "zh-CN", theme: "dark" },
   });
+  const transferable = new ArrayBuffer(8);
+  runtime.router.send({ type: "transfer-test", transferable }, [transferable]);
+  assert.deepEqual(transferLists.at(-1), [transferable]);
   assert.equal(forkOptions.cwd, packageRoot);
   assert.equal(runtime.router.onBeforeMessage, onBeforeMessage);
   assert.deepEqual(forkOptions.stdio, ["ignore", "pipe", "pipe"]);

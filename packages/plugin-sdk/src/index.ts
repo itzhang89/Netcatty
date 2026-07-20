@@ -113,7 +113,8 @@ export interface TerminalSessionSnapshot {
   readonly sessionId: string;
   readonly hostId?: string;
   readonly workspaceId?: string;
-  readonly protocol: "ssh" | "telnet" | "local" | "serial";
+  /** Built-in or namespaced plugin connection protocol identifier. */
+  readonly protocol: string;
   readonly status: "connecting" | "connected" | "disconnected";
   readonly cwd?: string;
   readonly title?: string;

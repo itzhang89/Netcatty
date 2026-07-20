@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { transitionPluginTerminalConnectionState } from './usePluginTerminalSessionLifecycle.ts';
+import {
+  normalizePluginTerminalProtocol,
+  transitionPluginTerminalConnectionState,
+} from './usePluginTerminalSessionLifecycle.ts';
 
 const connectedState = {
   cwd: '/srv/old',
@@ -65,4 +68,13 @@ test('transition snapshots remain writable for later cwd and title updates', () 
     cwd: '/srv/new',
     title: 'new backend',
   });
+});
+
+test('terminal lifecycle snapshots preserve dynamic protocol identifiers', () => {
+  assert.equal(
+    normalizePluginTerminalProtocol('com.example.transport'),
+    'com.example.transport',
+  );
+  assert.equal(normalizePluginTerminalProtocol('mosh'), 'mosh');
+  assert.equal(normalizePluginTerminalProtocol(undefined), 'ssh');
 });

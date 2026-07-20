@@ -46,7 +46,6 @@ const TERMINAL_EVENT_TYPES = new Set([
   "disconnected",
   "disposed",
 ]);
-const TERMINAL_PROTOCOLS = new Set(["ssh", "telnet", "local", "serial"]);
 const TERMINAL_STATUSES = new Set(["connecting", "connected", "disconnected"]);
 const TERMINAL_SHELL_TYPES = new Set(["posix", "fish", "powershell", "cmd", "unknown"]);
 
@@ -112,13 +111,22 @@ function optionalString(value, label, maximum = 512) {
   return assertBoundedString(value, label, maximum);
 }
 
+function normalizeTerminalProtocol(value) {
+  if (typeof value !== "string"
+    || value.length < 1
+    || value.length > 256
+    || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value)) {
+    throw invalidArgument("Terminal session protocol is invalid");
+  }
+  return value;
+}
+
 function normalizeTerminalSessionSnapshot(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw invalidArgument("Terminal session snapshot must be an object");
   }
-  const protocol = value.protocol;
+  const protocol = normalizeTerminalProtocol(value.protocol);
   const status = value.status;
-  if (!TERMINAL_PROTOCOLS.has(protocol)) throw invalidArgument("Terminal session protocol is invalid");
   if (!TERMINAL_STATUSES.has(status)) throw invalidArgument("Terminal session status is invalid");
   if (value.shellType != null && !TERMINAL_SHELL_TYPES.has(value.shellType)) {
     throw invalidArgument("Terminal session shell type is invalid");

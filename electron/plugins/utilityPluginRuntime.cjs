@@ -141,7 +141,7 @@ class UtilityPluginRuntime {
     this.child.stderr?.on("data", (chunk) => this.logger.write("warn", "utility stderr", { output: String(chunk).slice(0, 8_192) }));
     this.router = new PluginRpcRouter({
       pluginId: this.plugin.id,
-      send: (message) => this.child?.postMessage(message),
+      send: (message, transfer = []) => this.child?.postMessage(message, transfer),
       requestHandlers: this.requestHandlers,
       notificationHandlers: this.notificationHandlers,
       onBeforeMessage: this.onBeforeMessage,

@@ -80,8 +80,7 @@ export function TerminalAutocomplete({
   // flow through (and re-render) the TerminalView ctx.
   const visible = usePaneVisible(sessionId);
   const provideCompletions = useCallback(async (input: string, options: Parameters<typeof import("./autocomplete/completionEngine").getCompletions>[1]) => {
-    const normalizedProtocol: NetcattyTerminalSessionSnapshot['protocol'] =
-      protocol === "telnet" || protocol === "local" || protocol === "serial" ? protocol : "ssh";
+    const normalizedProtocol: NetcattyTerminalSessionSnapshot['protocol'] = protocol ?? "ssh";
     return provideTerminalCompletions(getWindowPluginTerminalProviderRegistry(), {
       input,
       session: {
