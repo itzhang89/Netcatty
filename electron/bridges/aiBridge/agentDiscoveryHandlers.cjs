@@ -8,29 +8,21 @@ function getCursorPlatformPackageName(platform = process.platform, arch = proces
 
 async function probeCursorSdkAvailability(shellEnv, options = {}) {
   const platformPackageName = getCursorPlatformPackageName();
-  if (!platformPackageName) {
-    return {
-      installed: false,
-      available: false,
-      authenticated: false,
-      authSource: null,
-      version: null,
-      cliBinPath: null,
-      cliEmail: null,
-    };
-  }
 
-  let installed = false;
-  try {
-    await import("@cursor/sdk");
-    require.resolve(`${platformPackageName}/package.json`);
-    installed = true;
-  } catch {
-    installed = false;
+  let sdkInstalled = false;
+  if (platformPackageName) {
+    try {
+      await import("@cursor/sdk");
+      require.resolve(`${platformPackageName}/package.json`);
+      sdkInstalled = true;
+    } catch {
+      sdkInstalled = false;
+    }
   }
 
   const hasEnvApiKey = Boolean(shellEnv?.CURSOR_API_KEY);
   const hasSettingsApiKey = Boolean(options?.apiKeyPresent);
+  const apiKeyOk = hasSettingsApiKey || hasEnvApiKey;
   const probeCli = typeof options?.probeCursorCliAuth === "function"
     ? options.probeCursorCliAuth
     : null;
@@ -43,22 +35,27 @@ async function probeCursorSdkAvailability(shellEnv, options = {}) {
     cliAuth = { authenticated: false, authSource: null, email: null, binPath: null };
   }
 
-  const hasCliLogin = Boolean(cliAuth.authenticated);
-  const authenticated = hasSettingsApiKey || hasEnvApiKey || hasCliLogin;
+  const cliLoginOk = Boolean(cliAuth.authenticated);
+  const authenticated = apiKeyOk || cliLoginOk;
+  // authSource describes the primary credential for display priority; CLI UI
+  // must use cliLoginOk, not this field alone.
   let authSource = null;
   if (hasSettingsApiKey) authSource = "settings";
   else if (hasEnvApiKey) authSource = "CURSOR_API_KEY";
-  else if (hasCliLogin) authSource = "cli-login";
+  else if (cliLoginOk) authSource = "cli-login";
 
-  // CLI login alone is enough for the CLI turn path even if the SDK package is
-  // missing; SDK package remains preferred for api-key mode.
-  const available = authenticated && (installed || hasCliLogin);
+  // Available if either mode can run a turn (API key + SDK, or CLI login).
+  const available = (apiKeyOk && sdkInstalled) || cliLoginOk;
+  const installed = sdkInstalled || Boolean(cliAuth.binPath) || cliLoginOk;
   return {
-    installed: installed || hasCliLogin,
+    installed,
+    sdkInstalled,
     available,
     authenticated,
     authSource,
-    version: installed ? "Cursor SDK" : (hasCliLogin ? "Cursor Agent CLI" : null),
+    apiKeyOk,
+    cliLoginOk,
+    version: sdkInstalled ? "Cursor SDK" : (cliLoginOk || cliAuth.binPath ? "Cursor Agent CLI" : null),
     cliBinPath: cliAuth.binPath || null,
     cliEmail: cliAuth.email || null,
   };
@@ -101,9 +98,9 @@ function registerAgentDiscoveryHandlers(ctx) {
       }
 
       const resolvedPath = agent.command === "cursor"
-        ? (cursorSdkStatus.cliBinPath
-          || await resolveCliFromPathAsync(agent.command, shellEnv)
-          || "cursor")
+        ? (cursorSdkStatus.cliLoginOk
+          ? (cursorSdkStatus.cliBinPath || "cursor")
+          : (cursorSdkStatus.sdkInstalled ? "cursor" : (cursorSdkStatus.cliBinPath || "cursor")))
         : await resolveCliFromPathAsync(agent.command, shellEnv); // Layer-1: locate
       if (!resolvedPath || seenPaths.has(resolvedPath)) continue;
 
@@ -153,6 +150,9 @@ function registerAgentDiscoveryHandlers(ctx) {
         ...(agent.command === "cursor" ? {
           cliEmail: cursorSdkStatus.cliEmail || null,
           cliBinPath: cursorSdkStatus.cliBinPath || null,
+          cliLoginOk: Boolean(cursorSdkStatus.cliLoginOk),
+          apiKeyOk: Boolean(cursorSdkStatus.apiKeyOk),
+          sdkInstalled: Boolean(cursorSdkStatus.sdkInstalled),
         } : {}),
       });
       seenPaths.add(resolvedPath);
@@ -195,9 +195,12 @@ function registerAgentDiscoveryHandlers(ctx) {
         apiKeyPresent: Boolean(apiKeyPresent),
         probeCursorCliAuth,
       });
-      const cursorPath = cursorSdkStatus.cliBinPath
-        || await resolveCliFromPathAsync(command, shellEnv)
-        || "cursor";
+      // Prefer CLI bin only when CLI login is proven. Otherwise do not use a
+      // PATH `agent` binary (generic name) for API-key/SDK path identity.
+      const resolvedSdkPath = await resolveCliFromPathAsync(command, shellEnv);
+      const cursorPath = cursorSdkStatus.cliLoginOk
+        ? (cursorSdkStatus.cliBinPath || resolvedSdkPath || "cursor")
+        : (resolvedSdkPath || "cursor");
       return {
         path: cursorSdkStatus.installed || cursorSdkStatus.available ? cursorPath : null,
         binPath: cursorSdkStatus.installed || cursorSdkStatus.available ? cursorPath : null,
@@ -208,6 +211,9 @@ function registerAgentDiscoveryHandlers(ctx) {
         authSource: cursorSdkStatus.authSource,
         cliEmail: cursorSdkStatus.cliEmail || null,
         cliBinPath: cursorSdkStatus.cliBinPath || null,
+        cliLoginOk: Boolean(cursorSdkStatus.cliLoginOk),
+        apiKeyOk: Boolean(cursorSdkStatus.apiKeyOk),
+        sdkInstalled: Boolean(cursorSdkStatus.sdkInstalled),
       };
     }
 

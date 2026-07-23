@@ -437,8 +437,9 @@ function registerSdkStreamHandlers(ctx) {
               } catch { /* best effort */ }
             }
             if (!cursorCliBinPath) {
-              cursorCliBinPath = await resolveCliFromPathAsync?.("agent", shellEnv)
-                || await resolveCliFromPathAsync?.("cursor-agent", shellEnv)
+              // Prefer cursor-agent: bare `agent` collides with other CLIs (e.g. Grok).
+              cursorCliBinPath = await resolveCliFromPathAsync?.("cursor-agent", shellEnv)
+                || await resolveCliFromPathAsync?.("agent", shellEnv)
                 || null;
             }
           }
@@ -625,8 +626,9 @@ function registerSdkStreamHandlers(ctx) {
             } catch { /* best effort */ }
           }
           if (!cursorCliBinPath) {
-            cursorCliBinPath = await resolveCliFromPathAsync?.("agent", shellEnv)
-              || await resolveCliFromPathAsync?.("cursor-agent", shellEnv)
+            // Prefer cursor-agent: bare `agent` collides with other CLIs (e.g. Grok).
+            cursorCliBinPath = await resolveCliFromPathAsync?.("cursor-agent", shellEnv)
+              || await resolveCliFromPathAsync?.("agent", shellEnv)
               || null;
           }
         }

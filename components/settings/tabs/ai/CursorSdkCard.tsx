@@ -54,14 +54,24 @@ export const CursorSdkCard: React.FC<{
     };
   }, [encryptedApiKey]);
 
-  const installed = Boolean(pathInfo?.installed);
-  const available = Boolean(pathInfo?.available);
+  const installed = Boolean(pathInfo?.installed || pathInfo?.sdkInstalled || pathInfo?.cliBinPath);
   const hasStoredApiKey = Boolean(encryptedApiKey);
-  const usesEnvApiKey = pathInfo?.authSource === "CURSOR_API_KEY";
-  const hasCliLogin = pathInfo?.authSource === "cli-login" || Boolean(pathInfo?.cliEmail);
-  const hasAnyApiKey = hasStoredApiKey || usesEnvApiKey;
+  const usesEnvApiKey = pathInfo?.authSource === "CURSOR_API_KEY" || (
+    pathInfo?.apiKeyOk && !hasStoredApiKey && pathInfo?.authSource !== "settings"
+  );
+  // CLI login is only proven by the dedicated probe — never generic `authenticated`
+  // (which is also true for env/settings API keys).
+  const hasCliLogin = Boolean(
+    pathInfo?.cliLoginOk || pathInfo?.authSource === "cli-login",
+  );
+  const hasAnyApiKey = hasStoredApiKey || Boolean(pathInfo?.apiKeyOk) || usesEnvApiKey
+    || pathInfo?.authSource === "settings"
+    || pathInfo?.authSource === "CURSOR_API_KEY";
   const isApiKeyMode = authMode === "api-key";
   const isCliMode = authMode === "cli-login";
+  const available = isCliMode
+    ? hasCliLogin
+    : (hasAnyApiKey && Boolean(pathInfo?.sdkInstalled ?? pathInfo?.installed));
   const canSave = isApiKeyMode && !isSaving && !isDecrypting && (Boolean(apiKeyDraft.trim()) || hasStoredApiKey);
 
   const installStatus = isResolvingPath
@@ -71,7 +81,7 @@ export const CursorSdkCard: React.FC<{
       : t("ai.cursor.notInstalled");
 
   const authStatus = isCliMode
-    ? hasCliLogin || pathInfo?.authenticated
+    ? hasCliLogin
       ? (pathInfo?.cliEmail
         ? t("ai.cursor.cliLoginAs", { email: pathInfo.cliEmail })
         : t("ai.cursor.cliLoginOk"))
@@ -88,7 +98,7 @@ export const CursorSdkCard: React.FC<{
       ? "text-emerald-500"
       : "text-amber-500";
   const authStatusClassName = isCliMode
-    ? (hasCliLogin || pathInfo?.authenticated ? "text-emerald-500" : "text-amber-500")
+    ? (hasCliLogin ? "text-emerald-500" : "text-amber-500")
     : (hasAnyApiKey ? "text-emerald-500" : "text-amber-500");
 
   const handleSave = async () => {

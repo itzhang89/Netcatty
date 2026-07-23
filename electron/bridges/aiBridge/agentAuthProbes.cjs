@@ -130,7 +130,14 @@ function probeCodebuddyAuth({ env, fileExists, readFile, homeDir } = {}) {
 }
 
 // ── Cursor CLI login (agent / cursor-agent) ──
-const CURSOR_CLI_BINARY_CANDIDATES = ["agent", "cursor-agent"];
+// Prefer `cursor-agent`: bare `agent` collides with other tools on PATH (e.g. Grok).
+const CURSOR_CLI_BINARY_CANDIDATES = ["cursor-agent", "agent"];
+
+function stripCursorApiKeyFromProbeEnv(env) {
+  const out = { ...(env || {}) };
+  delete out.CURSOR_API_KEY;
+  return out;
+}
 
 function defaultResolveCursorCliBinary(name, env) {
   try {
@@ -166,45 +173,63 @@ function defaultRunCursorStatus(binPath, env) {
   }
 }
 
+function parseCursorStatusJson(stdout) {
+  try {
+    const parsed = JSON.parse(String(stdout || "").trim());
+    if (!parsed || typeof parsed !== "object") return null;
+    // Real Cursor status always exposes isAuthenticated and/or status.
+    // Reject unrelated CLIs that accept unknown flags or emit other JSON.
+    if (typeof parsed.isAuthenticated !== "boolean" && typeof parsed.status !== "string") {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Probe local Cursor Agent CLI login (subscription session).
- * Prefers official `agent` binary, then `cursor-agent`.
+ * Tries `cursor-agent` then `agent`, keeping the first binary that returns a
+ * Cursor-shaped status JSON. Strips CURSOR_API_KEY so "cli-login" is not
+ * proven by a metered API key alone.
  *
  * @returns {{ authenticated: boolean, authSource: string|null, email: string|null, binPath: string|null }}
  */
 function probeCursorCliAuth({ env, resolveBinary, runStatus } = {}) {
-  const e = env || process.env;
+  const e = stripCursorApiKeyFromProbeEnv(env || process.env);
   const resolve = resolveBinary || ((name) => defaultResolveCursorCliBinary(name, e));
   const run = runStatus || ((bin) => defaultRunCursorStatus(bin, e));
 
-  let binPath = null;
+  let cursorShapedBinPath = null;
   for (const name of CURSOR_CLI_BINARY_CANDIDATES) {
-    binPath = resolve(name);
-    if (binPath) break;
-  }
-  if (!binPath) {
-    return { authenticated: false, authSource: null, email: null, binPath: null };
+    const binPath = resolve(name);
+    if (!binPath) continue;
+
+    const res = run(binPath);
+    if (!res) continue;
+
+    // Accept JSON even on non-zero exit if present (some CLIs exit 1 when logged out).
+    const parsed = parseCursorStatusJson(res.stdout);
+    if (!parsed) continue;
+
+    if (!cursorShapedBinPath) cursorShapedBinPath = binPath;
+
+    const authenticated = Boolean(
+      parsed.isAuthenticated === true || parsed.status === "authenticated",
+    );
+    if (!authenticated) continue;
+
+    const email = typeof parsed?.userInfo?.email === "string" ? parsed.userInfo.email : null;
+    return { authenticated: true, authSource: "cli-login", email, binPath };
   }
 
-  const res = run(binPath);
-  if (!res || res.exitCode !== 0) {
-    return { authenticated: false, authSource: null, email: null, binPath };
-  }
-
-  let parsed = null;
-  try {
-    parsed = JSON.parse(String(res.stdout || "").trim());
-  } catch {
-    return { authenticated: false, authSource: null, email: null, binPath };
-  }
-
-  const authenticated = Boolean(parsed && (parsed.isAuthenticated === true || parsed.status === "authenticated"));
-  if (!authenticated) {
-    return { authenticated: false, authSource: null, email: null, binPath };
-  }
-
-  const email = typeof parsed?.userInfo?.email === "string" ? parsed.userInfo.email : null;
-  return { authenticated: true, authSource: "cli-login", email, binPath };
+  return {
+    authenticated: false,
+    authSource: null,
+    email: null,
+    binPath: cursorShapedBinPath,
+  };
 }
 
 module.exports = {

@@ -626,6 +626,9 @@ test("resolve-cli reports Cursor SDK installed but unavailable without an API ke
       authSource: null,
       cliEmail: null,
       cliBinPath: null,
+      cliLoginOk: false,
+      apiKeyOk: false,
+      sdkInstalled: true,
     });
   } finally {
     restore();
@@ -657,6 +660,9 @@ test("resolve-cli separates Cursor SDK installation from API key availability", 
       authSource: null,
       cliEmail: null,
       cliBinPath: null,
+      cliLoginOk: false,
+      apiKeyOk: false,
+      sdkInstalled: true,
     });
   } finally {
     restore();
@@ -689,6 +695,9 @@ test("resolve-cli ignores custom Cursor paths and stores the SDK sentinel path",
       authSource: "CURSOR_API_KEY",
       cliEmail: null,
       cliBinPath: null,
+      cliLoginOk: false,
+      apiKeyOk: true,
+      sdkInstalled: true,
     });
   } finally {
     restore();
@@ -717,6 +726,9 @@ test("resolve-cli exposes Cursor SDK support when installed and authenticated", 
       authSource: "CURSOR_API_KEY",
       cliEmail: null,
       cliBinPath: null,
+      cliLoginOk: false,
+      apiKeyOk: true,
+      sdkInstalled: true,
     });
   } finally {
     restore();
@@ -747,6 +759,9 @@ test("resolve-cli exposes Cursor SDK support when API key is saved in settings",
       authSource: "settings",
       cliEmail: null,
       cliBinPath: null,
+      cliLoginOk: false,
+      apiKeyOk: true,
+      sdkInstalled: true,
     });
   } finally {
     restore();

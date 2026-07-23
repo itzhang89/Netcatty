@@ -53,8 +53,12 @@ function buildCursorCliArgs({
 
   const mode = String(permissionMode || "confirm").toLowerCase();
   if (mode === "observer") {
+    // Read-only ask mode; no shell write approvals expected.
     args.push("--mode", "ask");
-  } else if (mode === "auto") {
+  } else {
+    // confirm/auto (and any other agent mode): stdin is ignored for the child, so
+    // interactive y/n command approval cannot work. Cursor docs require --force
+    // (--yolo) to auto-allow shell/tools in non-interactive runs.
     args.push("--force");
   }
 
@@ -65,6 +69,7 @@ function buildCursorCliArgs({
 function mcpConfigToCursorMcpJsonEntry(cfg) {
   if (!cfg || !cfg.name || !cfg.command) return null;
   const entry = {
+    type: "stdio",
     command: cfg.command,
     args: Array.isArray(cfg.args) ? cfg.args : [],
   };
@@ -73,23 +78,47 @@ function mcpConfigToCursorMcpJsonEntry(cfg) {
   return { name: cfg.name, entry };
 }
 
-function mergeWorkspaceMcpJson(cwd, injectedMcpServers, { readFileSync, writeFileSync, mkdirSync, existsSync } = {}) {
+// Per-path refcount so concurrent CLI turns share one original snapshot and only
+// the last restorer writes the pre-merge file back (avoids last-writer-wins races).
+const mcpMergeRefcounts = new Map();
+
+function mergeWorkspaceMcpJson(cwd, injectedMcpServers, { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } = {}) {
   const read = readFileSync || fs.readFileSync;
   const write = writeFileSync || fs.writeFileSync;
   const mkdir = mkdirSync || fs.mkdirSync;
   const exists = existsSync || fs.existsSync;
+  const unlink = unlinkSync || ((p) => fs.unlinkSync(p));
 
   const cursorDir = path.join(cwd || process.cwd(), ".cursor");
   const mcpPath = path.join(cursorDir, "mcp.json");
-  let previousRaw = null;
-  let previousExisted = false;
-  let doc = { mcpServers: {} };
 
+  let state = mcpMergeRefcounts.get(mcpPath);
+  if (!state) {
+    let previousRaw = null;
+    let previousExisted = false;
+    if (exists(mcpPath)) {
+      previousExisted = true;
+      previousRaw = read(mcpPath, "utf8");
+    }
+    state = { refCount: 0, previousRaw, previousExisted };
+    mcpMergeRefcounts.set(mcpPath, state);
+  }
+  state.refCount += 1;
+
+  let doc = { mcpServers: {} };
   if (exists(mcpPath)) {
-    previousExisted = true;
-    previousRaw = read(mcpPath, "utf8");
     try {
-      const parsed = JSON.parse(previousRaw);
+      const parsed = JSON.parse(read(mcpPath, "utf8"));
+      if (parsed && typeof parsed === "object") {
+        doc = parsed;
+        if (!doc.mcpServers || typeof doc.mcpServers !== "object") doc.mcpServers = {};
+      }
+    } catch {
+      doc = { mcpServers: {} };
+    }
+  } else if (state.previousExisted && state.previousRaw) {
+    try {
+      const parsed = JSON.parse(state.previousRaw);
       if (parsed && typeof parsed === "object") {
         doc = parsed;
         if (!doc.mcpServers || typeof doc.mcpServers !== "object") doc.mcpServers = {};
@@ -105,22 +134,42 @@ function mergeWorkspaceMcpJson(cwd, injectedMcpServers, { readFileSync, writeFil
     doc.mcpServers[mapped.name] = mapped.entry;
   }
 
-  if (!exists(cursorDir)) {
-    mkdir(cursorDir, { recursive: true });
+  try {
+    if (!exists(cursorDir)) {
+      mkdir(cursorDir, { recursive: true });
+    }
+    write(mcpPath, `${JSON.stringify(doc, null, 2)}\n`, "utf8");
+  } catch (err) {
+    // Roll back refcount so a failed write does not pin the lock forever.
+    state.refCount = Math.max(0, state.refCount - 1);
+    if (state.refCount === 0) mcpMergeRefcounts.delete(mcpPath);
+    throw err;
   }
-  write(mcpPath, `${JSON.stringify(doc, null, 2)}\n`, "utf8");
 
+  let restored = false;
   return {
     mcpPath,
     restore() {
+      if (restored) return;
+      restored = true;
+      const current = mcpMergeRefcounts.get(mcpPath);
+      if (!current) return;
+      current.refCount = Math.max(0, current.refCount - 1);
+      if (current.refCount > 0) return;
+      mcpMergeRefcounts.delete(mcpPath);
       try {
-        if (previousExisted) write(mcpPath, previousRaw, "utf8");
-        else if (exists(mcpPath)) fs.unlinkSync(mcpPath);
+        if (current.previousExisted) write(mcpPath, current.previousRaw, "utf8");
+        else if (exists(mcpPath)) unlink(mcpPath);
       } catch {
         /* best effort */
       }
     },
   };
+}
+
+/** Test helper: clear MCP merge refcount state between unit tests. */
+function resetMcpMergeRefcountsForTests() {
+  mcpMergeRefcounts.clear();
 }
 
 function resultToText(result) {
@@ -264,10 +313,13 @@ function translateCursorCliEvent(event, emitter, state = {}) {
 
 function formatCursorCliErrorForUser(message) {
   const text = String(message || "").trim();
-  if (/not authenticated|login|unauthorized|unauthenticated/i.test(text)) {
+  if (
+    /not authenticated|not logged in|please run .*login|unauthenticated|unauthorized/i.test(text)
+    || /(?:^|\b)(?:agent|cursor-agent)\s+login\b/i.test(text)
+  ) {
     return "Cursor CLI is not logged in. Run `agent login` in a terminal, then retry.";
   }
-  if (/api.?key/i.test(text)) {
+  if (/\bapi[_\s-]?key\b/i.test(text) && /invalid|missing|required|auth/i.test(text)) {
     return "Cursor CLI authentication failed. Run `agent login` or switch Cursor to API Key mode in Settings → AI.";
   }
   return text || "Cursor CLI turn failed";
@@ -361,6 +413,8 @@ async function runCursorCliTurn({
   }
 
   const handleLine = (line) => {
+    // Soft-cancel: ignore late stream-json after Stop (result/error would emitError).
+    if (signal?.aborted) return;
     let event;
     try {
       event = JSON.parse(line);
@@ -368,13 +422,16 @@ async function runCursorCliTurn({
       return;
     }
     const stop = translateCursorCliEvent(event, emitter, state);
-    if (stop) state.failed = true;
+    if (stop && !signal?.aborted) state.failed = true;
   };
 
   const stdoutBuffer = createLineBuffer(handleLine);
   const stderrChunks = [];
 
-  child.stdout?.on("data", (chunk) => stdoutBuffer.push(chunk));
+  child.stdout?.on("data", (chunk) => {
+    if (signal?.aborted) return;
+    stdoutBuffer.push(chunk);
+  });
   child.stderr?.on("data", (chunk) => {
     stderrChunks.push(String(chunk));
   });
@@ -392,18 +449,22 @@ async function runCursorCliTurn({
     const finish = () => {
       if (settled) return;
       settled = true;
-      stdoutBuffer.flush();
+      // Only flush remaining lines if not aborted — late error/result after
+      // Stop must not surface as a failed turn.
+      if (!signal?.aborted) stdoutBuffer.flush();
       resolve();
     };
     child.on("error", (err) => {
-      if (!state.failed) {
+      // Soft-cancel: do not surface spawn errors after user Stop.
+      if (!state.failed && !signal?.aborted) {
         state.failed = true;
         emitter.emitError(formatCursorCliErrorForUser(err?.message || String(err)));
       }
       finish();
     });
     child.on("close", (code) => {
-      if (!state.failed && code && code !== 0 && !state.streamedAssistantText) {
+      // Soft-cancel: SIGTERM/kill after abort is not a turn failure.
+      if (!state.failed && !signal?.aborted && code && code !== 0 && !state.streamedAssistantText) {
         const stderr = stderrChunks.join("").trim();
         const message = stderr || `Cursor CLI exited with code ${code}`;
         state.failed = true;
@@ -415,8 +476,10 @@ async function runCursorCliTurn({
 
   if (signal) signal.removeEventListener("abort", abortHandler);
   cleanup();
+  closeReasoning(state, emitter);
 
-  if (!state.failed) {
+  // Match cursorDriver: aborted turns must not report as successful done.
+  if (!state.failed && !signal?.aborted) {
     emitter.emitDone();
   }
 
@@ -489,6 +552,7 @@ module.exports = {
   formatCursorCliErrorForUser,
   listCursorCliModels,
   mergeWorkspaceMcpJson,
+  resetMcpMergeRefcountsForTests,
   resolveCursorCliModel,
   runCursorCliTurn,
   stripCursorApiKeyFromEnv,

@@ -3,8 +3,10 @@ const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const {
   buildCursorCliArgs,
+  formatCursorCliErrorForUser,
   listCursorCliModels,
   mergeWorkspaceMcpJson,
+  resetMcpMergeRefcountsForTests,
   resolveCursorCliModel,
   runCursorCliTurn,
   stripCursorApiKeyFromEnv,
@@ -75,6 +77,27 @@ test("buildCursorCliArgs maps permission modes and resume", () => {
   });
   assert.ok(autoArgs.includes("--force"));
   assert.ok(!autoArgs.includes("--mode"));
+
+  // confirm must pass --force: stdin is ignored and Cursor asks y/n for shell tools.
+  const confirmArgs = buildCursorCliArgs({
+    model: "auto",
+    permissionMode: "confirm",
+    cwd: "/repo",
+    prompt: "go",
+  });
+  assert.ok(confirmArgs.includes("--force"));
+  assert.ok(!confirmArgs.includes("--mode"));
+});
+
+test("formatCursorCliErrorForUser does not over-match bare login strings", () => {
+  assert.match(
+    formatCursorCliErrorForUser("Not authenticated"),
+    /not logged in/i,
+  );
+  assert.equal(
+    formatCursorCliErrorForUser("Failed to run login form validation"),
+    "Failed to run login form validation",
+  );
 });
 
 test("translateCursorCliEvent streams thinking, text, and tools", () => {
@@ -117,6 +140,7 @@ test("translateCursorCliEvent streams thinking, text, and tools", () => {
 });
 
 test("mergeWorkspaceMcpJson upserts netcatty without dropping others", () => {
+  resetMcpMergeRefcountsForTests();
   const files = new Map();
   files.set("/repo/.cursor/mcp.json", JSON.stringify({
     mcpServers: { other: { command: "echo" } },
@@ -137,10 +161,41 @@ test("mergeWorkspaceMcpJson upserts netcatty without dropping others", () => {
   const written = JSON.parse(files.get("/repo/.cursor/mcp.json"));
   assert.equal(written.mcpServers.other.command, "echo");
   assert.equal(written.mcpServers["netcatty-remote-hosts"].command, "node");
+  assert.equal(written.mcpServers["netcatty-remote-hosts"].type, "stdio");
   assert.equal(written.mcpServers["netcatty-remote-hosts"].env.TOKEN, "x");
 
   handle.restore();
   assert.ok(files.get("/repo/.cursor/mcp.json").includes('"other"'));
+});
+
+test("mergeWorkspaceMcpJson concurrent turns restore original only after last", () => {
+  resetMcpMergeRefcountsForTests();
+  const files = new Map();
+  const original = JSON.stringify({ mcpServers: { other: { command: "echo" } } }, null, 2);
+  files.set("/repo/.cursor/mcp.json", original);
+  const fsApi = {
+    existsSync: (p) => files.has(p) || p === "/repo/.cursor",
+    readFileSync: (p) => files.get(p),
+    writeFileSync: (p, data) => { files.set(p, data); },
+    mkdirSync: () => {},
+  };
+
+  const a = mergeWorkspaceMcpJson("/repo", [{
+    name: "netcatty-remote-hosts",
+    command: "node",
+    args: ["a.cjs"],
+  }], fsApi);
+  const b = mergeWorkspaceMcpJson("/repo", [{
+    name: "netcatty-remote-hosts",
+    command: "node",
+    args: ["b.cjs"],
+  }], fsApi);
+
+  a.restore();
+  // First restore must keep the merged file while another turn is in flight.
+  assert.ok(files.get("/repo/.cursor/mcp.json").includes("netcatty-remote-hosts"));
+  b.restore();
+  assert.equal(files.get("/repo/.cursor/mcp.json"), original);
 });
 
 test("runCursorCliTurn strips API key, parses stream, emits done", async () => {
@@ -187,11 +242,211 @@ test("runCursorCliTurn strips API key, parses stream, emits done", async () => {
   assert.equal(observed.env.CURSOR_API_KEY, undefined);
   assert.equal(observed.env.PATH, "/bin");
   assert.ok(observed.args.includes("auto"));
+  assert.ok(observed.args.includes("--force"));
   assert.equal(result.sessionId, "sess-cli");
   assert.deepEqual(emitter.calls, [
     ["sessionId", "sess-cli"],
     ["text", "PONG"],
     ["sessionId", "sess-cli"],
+    ["done"],
+  ]);
+});
+
+test("runCursorCliTurn abort after text does not emit done", async () => {
+  const emitter = makeEmitter();
+  const ac = new AbortController();
+  const fakeChild = new EventEmitter();
+  fakeChild.stdout = new EventEmitter();
+  fakeChild.stderr = new EventEmitter();
+  fakeChild.killed = false;
+  fakeChild.kill = () => {
+    fakeChild.killed = true;
+    queueMicrotask(() => fakeChild.emit("close", 143));
+  };
+
+  const turnPromise = runCursorCliTurn({
+    prompt: "hi",
+    binPath: "/bin/agent",
+    cwd: "/repo",
+    model: "auto",
+    env: {},
+    permissionMode: "confirm",
+    injectedMcpServers: [],
+    emitter,
+    signal: ac.signal,
+    spawnImpl: () => {
+      queueMicrotask(() => {
+        fakeChild.stdout.emit("data", `${JSON.stringify({
+          type: "assistant", timestamp_ms: 1, message: { content: [{ type: "text", text: "partial" }] },
+        })}\n`);
+        ac.abort();
+      });
+      return fakeChild;
+    },
+    mergeMcp: () => ({ restore() {} }),
+  });
+
+  await turnPromise;
+  assert.ok(fakeChild.killed);
+  assert.deepEqual(emitter.calls, [
+    ["text", "partial"],
+  ]);
+  assert.ok(!emitter.calls.some((c) => c[0] === "done"));
+  assert.ok(!emitter.calls.some((c) => c[0] === "error"));
+});
+
+test("runCursorCliTurn abort before any text is soft cancel (no error/done)", async () => {
+  const emitter = makeEmitter();
+  const ac = new AbortController();
+  const fakeChild = new EventEmitter();
+  fakeChild.stdout = new EventEmitter();
+  fakeChild.stderr = new EventEmitter();
+  fakeChild.killed = false;
+  fakeChild.kill = () => {
+    fakeChild.killed = true;
+    queueMicrotask(() => fakeChild.emit("close", 143));
+  };
+
+  await runCursorCliTurn({
+    prompt: "hi",
+    binPath: "/bin/agent",
+    cwd: "/repo",
+    model: "auto",
+    env: {},
+    permissionMode: "confirm",
+    injectedMcpServers: [],
+    emitter,
+    signal: ac.signal,
+    spawnImpl: () => {
+      queueMicrotask(() => ac.abort());
+      return fakeChild;
+    },
+    mergeMcp: () => ({ restore() {} }),
+  });
+
+  assert.ok(fakeChild.killed);
+  assert.deepEqual(emitter.calls, []);
+});
+
+test("runCursorCliTurn ignores late error events after abort (before text)", async () => {
+  const emitter = makeEmitter();
+  const ac = new AbortController();
+  const fakeChild = new EventEmitter();
+  fakeChild.stdout = new EventEmitter();
+  fakeChild.stderr = new EventEmitter();
+  fakeChild.killed = false;
+  fakeChild.kill = () => {
+    fakeChild.killed = true;
+  };
+
+  await runCursorCliTurn({
+    prompt: "hi",
+    binPath: "/bin/agent",
+    cwd: "/repo",
+    model: "auto",
+    env: {},
+    permissionMode: "confirm",
+    injectedMcpServers: [],
+    emitter,
+    signal: ac.signal,
+    spawnImpl: () => {
+      queueMicrotask(() => {
+        ac.abort();
+        // Late stream after Stop — must not surface as emitError.
+        fakeChild.stdout.emit("data", `${JSON.stringify({
+          type: "error", message: "not authenticated",
+        })}\n`);
+        fakeChild.stdout.emit("data", `${JSON.stringify({
+          type: "result", subtype: "error", is_error: true, result: "boom",
+        })}\n`);
+        fakeChild.emit("close", 1);
+      });
+      return fakeChild;
+    },
+    mergeMcp: () => ({ restore() {} }),
+  });
+
+  assert.deepEqual(emitter.calls, []);
+  assert.ok(!emitter.calls.some((c) => c[0] === "error"));
+  assert.ok(!emitter.calls.some((c) => c[0] === "done"));
+});
+
+test("runCursorCliTurn ignores late error after abort following partial text", async () => {
+  const emitter = makeEmitter();
+  const ac = new AbortController();
+  const fakeChild = new EventEmitter();
+  fakeChild.stdout = new EventEmitter();
+  fakeChild.stderr = new EventEmitter();
+  fakeChild.killed = false;
+  fakeChild.kill = () => {
+    fakeChild.killed = true;
+  };
+
+  await runCursorCliTurn({
+    prompt: "hi",
+    binPath: "/bin/agent",
+    cwd: "/repo",
+    model: "auto",
+    env: {},
+    permissionMode: "auto",
+    injectedMcpServers: [],
+    emitter,
+    signal: ac.signal,
+    spawnImpl: () => {
+      queueMicrotask(() => {
+        fakeChild.stdout.emit("data", `${JSON.stringify({
+          type: "assistant", timestamp_ms: 1, message: { content: [{ type: "text", text: "hi" }] },
+        })}\n`);
+        ac.abort();
+        fakeChild.stdout.emit("data", `${JSON.stringify({
+          type: "result", subtype: "error", is_error: true, result: "killed",
+        })}\n`);
+        fakeChild.emit("close", 143);
+      });
+      return fakeChild;
+    },
+    mergeMcp: () => ({ restore() {} }),
+  });
+
+  assert.deepEqual(emitter.calls, [
+    ["text", "hi"],
+  ]);
+  assert.ok(!emitter.calls.some((c) => c[0] === "error"));
+  assert.ok(!emitter.calls.some((c) => c[0] === "done"));
+});
+
+test("runCursorCliTurn closes open reasoning before done", async () => {
+  const emitter = makeEmitter();
+  const fakeChild = new EventEmitter();
+  fakeChild.stdout = new EventEmitter();
+  fakeChild.stderr = new EventEmitter();
+  fakeChild.killed = false;
+  fakeChild.kill = () => { fakeChild.killed = true; };
+
+  await runCursorCliTurn({
+    prompt: "hi",
+    binPath: "/bin/agent",
+    cwd: "/repo",
+    model: "auto",
+    env: {},
+    permissionMode: "auto",
+    injectedMcpServers: [],
+    emitter,
+    spawnImpl: () => {
+      queueMicrotask(() => {
+        fakeChild.stdout.emit("data", `${JSON.stringify({
+          type: "thinking", subtype: "delta", text: "hmm",
+        })}\n`);
+        fakeChild.emit("close", 0);
+      });
+      return fakeChild;
+    },
+    mergeMcp: () => ({ restore() {} }),
+  });
+
+  assert.deepEqual(emitter.calls, [
+    ["reasoning", "hmm"],
+    ["reasoningEnd"],
     ["done"],
   ]);
 });
