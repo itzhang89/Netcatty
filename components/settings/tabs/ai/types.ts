@@ -60,6 +60,8 @@ export interface AgentPathInfo {
   installed?: boolean;
   authenticated?: boolean;
   authSource?: string | null;
+  cliEmail?: string | null;
+  cliBinPath?: string | null;
 }
 
 export interface UserSkillStatusItem {

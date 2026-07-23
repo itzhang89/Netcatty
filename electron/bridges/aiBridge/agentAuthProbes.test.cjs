@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
-  probeClaudeAuth, probeCopilotAuth, probeCodexAuth, probeCodebuddyAuth,
+  probeClaudeAuth, probeCopilotAuth, probeCodexAuth, probeCodebuddyAuth, probeCursorCliAuth,
 } = require("./agentAuthProbes.cjs");
 
 test("probeClaudeAuth: env ANTHROPIC_API_KEY -> authenticated env", () => {
@@ -156,4 +156,72 @@ test("probeCodebuddyAuth: CODEBUDDY_API_KEY takes precedence over settings.json"
   });
   assert.equal(r.authenticated, true);
   assert.equal(r.authSource, "api-key");
+});
+
+// ── Cursor CLI login ──
+test("probeCursorCliAuth: prefers agent binary and parses authenticated JSON", () => {
+  const calls = [];
+  const r = probeCursorCliAuth({
+    resolveBinary: (name) => {
+      calls.push(name);
+      return name === "agent" ? "/bin/agent" : null;
+    },
+    runStatus: (bin) => {
+      assert.equal(bin, "/bin/agent");
+      return {
+        exitCode: 0,
+        stdout: JSON.stringify({
+          status: "authenticated",
+          isAuthenticated: true,
+          userInfo: { email: "user@example.com" },
+        }),
+      };
+    },
+  });
+  assert.deepEqual(calls, ["agent"]);
+  assert.equal(r.authenticated, true);
+  assert.equal(r.authSource, "cli-login");
+  assert.equal(r.email, "user@example.com");
+  assert.equal(r.binPath, "/bin/agent");
+});
+
+test("probeCursorCliAuth: falls back to cursor-agent when agent missing", () => {
+  const r = probeCursorCliAuth({
+    resolveBinary: (name) => (name === "cursor-agent" ? "/bin/cursor-agent" : null),
+    runStatus: () => ({
+      exitCode: 0,
+      stdout: JSON.stringify({ isAuthenticated: true, userInfo: { email: "a@b.c" } }),
+    }),
+  });
+  assert.equal(r.authenticated, true);
+  assert.equal(r.binPath, "/bin/cursor-agent");
+});
+
+test("probeCursorCliAuth: unauthenticated JSON -> not authenticated", () => {
+  const r = probeCursorCliAuth({
+    resolveBinary: () => "/bin/agent",
+    runStatus: () => ({
+      exitCode: 0,
+      stdout: JSON.stringify({ isAuthenticated: false }),
+    }),
+  });
+  assert.equal(r.authenticated, false);
+  assert.equal(r.authSource, null);
+});
+
+test("probeCursorCliAuth: missing binary -> not authenticated", () => {
+  const r = probeCursorCliAuth({
+    resolveBinary: () => null,
+    runStatus: () => { throw new Error("should not run"); },
+  });
+  assert.equal(r.authenticated, false);
+  assert.equal(r.binPath, null);
+});
+
+test("probeCursorCliAuth: status command failure -> not authenticated", () => {
+  const r = probeCursorCliAuth({
+    resolveBinary: () => "/bin/agent",
+    runStatus: () => ({ exitCode: 1, stdout: "", stderr: "boom" }),
+  });
+  assert.equal(r.authenticated, false);
 });

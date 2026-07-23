@@ -129,11 +129,91 @@ function probeCodebuddyAuth({ env, fileExists, readFile, homeDir } = {}) {
   return { authenticated: false, authSource: null };
 }
 
+// ── Cursor CLI login (agent / cursor-agent) ──
+const CURSOR_CLI_BINARY_CANDIDATES = ["agent", "cursor-agent"];
+
+function defaultResolveCursorCliBinary(name, env) {
+  try {
+    const whichCmd = process.platform === "win32" ? "where" : "which";
+    const out = execFileSync(whichCmd, [name], {
+      encoding: "utf8",
+      timeout: 4000,
+      env: env || process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const first = String(out || "").split(/\r?\n/).map((l) => l.trim()).find(Boolean);
+    return first || null;
+  } catch {
+    return null;
+  }
+}
+
+function defaultRunCursorStatus(binPath, env) {
+  try {
+    const stdout = execFileSync(binPath, ["status", "--format", "json"], {
+      encoding: "utf8",
+      timeout: 8000,
+      env: env || process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return { exitCode: 0, stdout: String(stdout || ""), stderr: "" };
+  } catch (err) {
+    return {
+      exitCode: err?.status ?? 1,
+      stdout: String(err?.stdout || ""),
+      stderr: String(err?.stderr || err?.message || ""),
+    };
+  }
+}
+
+/**
+ * Probe local Cursor Agent CLI login (subscription session).
+ * Prefers official `agent` binary, then `cursor-agent`.
+ *
+ * @returns {{ authenticated: boolean, authSource: string|null, email: string|null, binPath: string|null }}
+ */
+function probeCursorCliAuth({ env, resolveBinary, runStatus } = {}) {
+  const e = env || process.env;
+  const resolve = resolveBinary || ((name) => defaultResolveCursorCliBinary(name, e));
+  const run = runStatus || ((bin) => defaultRunCursorStatus(bin, e));
+
+  let binPath = null;
+  for (const name of CURSOR_CLI_BINARY_CANDIDATES) {
+    binPath = resolve(name);
+    if (binPath) break;
+  }
+  if (!binPath) {
+    return { authenticated: false, authSource: null, email: null, binPath: null };
+  }
+
+  const res = run(binPath);
+  if (!res || res.exitCode !== 0) {
+    return { authenticated: false, authSource: null, email: null, binPath };
+  }
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(String(res.stdout || "").trim());
+  } catch {
+    return { authenticated: false, authSource: null, email: null, binPath };
+  }
+
+  const authenticated = Boolean(parsed && (parsed.isAuthenticated === true || parsed.status === "authenticated"));
+  if (!authenticated) {
+    return { authenticated: false, authSource: null, email: null, binPath };
+  }
+
+  const email = typeof parsed?.userInfo?.email === "string" ? parsed.userInfo.email : null;
+  return { authenticated: true, authSource: "cli-login", email, binPath };
+}
+
 module.exports = {
   probeClaudeAuth,
   probeCopilotAuth,
   probeCodexAuth,
   probeCodebuddyAuth,
+  probeCursorCliAuth,
+  CURSOR_CLI_BINARY_CANDIDATES,
   defaultRunSecurity,
   defaultRunGhAuthStatus,
 };

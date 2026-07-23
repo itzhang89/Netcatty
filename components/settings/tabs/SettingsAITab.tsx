@@ -13,6 +13,7 @@ import type {
   AIPermissionMode,
   AIProviderId,
   AIToolIntegrationMode,
+  CursorAuthMode,
   ExternalAgentConfig,
   ProviderConfig,
   WebSearchConfig,
@@ -303,6 +304,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     [externalAgents],
   );
   const cursorApiKeyEncrypted = cursorManagedAgent?.apiKey;
+  const cursorAuthMode: CursorAuthMode = cursorManagedAgent?.cursorAuthMode === "cli-login"
+    ? "cli-login"
+    : "api-key";
 
   // Ref to read current defaultAgentId without adding it as a dependency.
   const defaultAgentIdRef = useRef(defaultAgentId);
@@ -391,7 +395,11 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         command: agentKey,
         customPath: customPath.trim(),
         refreshShellEnv: Boolean(options?.refreshShellEnv),
-        ...(agentKey === "cursor" ? { apiKeyPresent: Boolean(options?.apiKeyPresent ?? cursorApiKeyEncrypted) } : {}),
+        ...(agentKey === "cursor" ? {
+        apiKeyPresent: (options?.apiKeyPresent !== undefined
+          ? Boolean(options.apiKeyPresent)
+          : (cursorAuthMode === "api-key" && Boolean(cursorApiKeyEncrypted))),
+      } : {}),
       });
       if (!isCurrentRequest()) return null;
       if (
@@ -425,7 +433,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         setResolving(false);
       }
     }
-  }, [applyResolvedAgentPath, cursorApiKeyEncrypted]);
+  }, [applyResolvedAgentPath, cursorApiKeyEncrypted, cursorAuthMode]);
 
   useEffect(() => {
     if (activeSubTab !== "agents") return;
@@ -444,7 +452,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         key: "cursor",
         delayMs: 1000,
         path: initialPaths?.cursor ?? "",
-        options: { apiKeyPresent: Boolean(cursorApiKeyEncrypted) },
+        options: { apiKeyPresent: cursorAuthMode === "api-key" && Boolean(cursorApiKeyEncrypted) },
       },
       { key: "codebuddy", delayMs: 1280, path: initialPaths?.codebuddy ?? "" },
       { key: "opencode", delayMs: 1560, path: initialPaths?.opencode ?? "" },
@@ -464,7 +472,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     return () => {
       for (const cancel of cancelTasks) cancel();
     };
-  }, [activeSubTab, cursorApiKeyEncrypted, resolveAgentPath]);
+  }, [activeSubTab, cursorApiKeyEncrypted, cursorAuthMode, resolveAgentPath]);
 
   const handleSaveCursorApiKey = useCallback(async (apiKey: string) => {
     const trimmed = apiKey.trim();
@@ -486,6 +494,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
           enabled: false,
         }),
         apiKey: encrypted,
+        cursorAuthMode: "api-key",
         command: result?.path || existing?.command || cursorPathInfo?.path || "cursor",
         available: Boolean(result?.available),
         enabled: result?.available ? (existing?.enabled ?? true) : false,
@@ -493,6 +502,36 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
       return [...others, nextAgent];
     });
   }, [cursorPathInfo?.path, resolveAgentPath, setExternalAgents]);
+
+  const handleCursorAuthModeChange = useCallback((mode: CursorAuthMode) => {
+    setExternalAgents((prev) => {
+      const existing = prev.find((agent) => agent.id === "discovered_cursor");
+      const others = prev.filter((agent) => agent.id !== "discovered_cursor");
+      const nextAgent: ExternalAgentConfig = {
+        ...(existing ?? {
+          id: "discovered_cursor",
+          name: "Cursor",
+          command: cursorPathInfo?.path || "cursor",
+          args: ["{prompt}"],
+          icon: "cursor",
+          sdkBackend: "cursor",
+          enabled: false,
+        }),
+        cursorAuthMode: mode,
+        // Mutual exclusivity: CLI mode must not keep an active API key for turns.
+        ...(mode === "cli-login" ? { apiKey: undefined } : {}),
+        command: mode === "cli-login"
+          ? (cursorPathInfo?.cliBinPath || cursorPathInfo?.path || existing?.command || "cursor")
+          : (existing?.command || cursorPathInfo?.path || "cursor"),
+        available: Boolean(cursorPathInfo?.available),
+        enabled: cursorPathInfo?.available ? (existing?.enabled ?? true) : false,
+      };
+      return [...others, nextAgent];
+    });
+    void resolveAgentPath("cursor", "", {
+      apiKeyPresent: mode === "api-key" ? Boolean(cursorApiKeyEncrypted) : false,
+    });
+  }, [cursorApiKeyEncrypted, cursorPathInfo, resolveAgentPath, setExternalAgents]);
 
   // Add a new provider from preset
   const handleAddProvider = useCallback(
@@ -669,7 +708,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     const result = await resolveAgentPath(agentKey, "", {
       refreshShellEnv: true,
       commandSource: "auto",
-      ...(agentKey === "cursor" ? { apiKeyPresent: Boolean(cursorApiKeyEncrypted) } : {}),
+      ...(agentKey === "cursor" ? {
+        apiKeyPresent: cursorAuthMode === "api-key" && Boolean(cursorApiKeyEncrypted),
+      } : {}),
     });
     if (agentKey === "codex") {
       await refreshCodexIntegration({
@@ -678,7 +719,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         codexPath: result?.path || undefined,
       });
     }
-  }, [cursorApiKeyEncrypted, resolveAgentPath, refreshCodexIntegration]);
+  }, [cursorApiKeyEncrypted, cursorAuthMode, resolveAgentPath, refreshCodexIntegration]);
 
   useEffect(() => {
     if (activeSubTab !== "agents") return;
@@ -1012,6 +1053,8 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               pathInfo={cursorPathInfo}
               isResolvingPath={isResolvingCursor}
               encryptedApiKey={cursorApiKeyEncrypted}
+              authMode={cursorAuthMode}
+              onAuthModeChange={handleCursorAuthModeChange}
               onSaveApiKey={handleSaveCursorApiKey}
               onRecheckPath={() => void handleCheckCustomPath("cursor")}
             />

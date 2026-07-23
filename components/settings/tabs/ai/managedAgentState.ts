@@ -37,7 +37,7 @@ export function buildManagedAgentState(
 
   if (!pathInfo?.available || !pathInfo.path) {
     const existingManaged = managedAgents.find((agent) => agent.id === managedId);
-    if (agentKey === "cursor" && existingManaged?.apiKey) {
+    if (agentKey === "cursor" && (existingManaged?.apiKey || existingManaged?.cursorAuthMode === "cli-login")) {
       const defaults = AGENT_DEFAULTS[agentKey];
       const {
         acpCommand: _legacyCommand,
@@ -54,7 +54,8 @@ export function buildManagedAgentState(
             command: pathInfo?.path || existingManaged.command || "cursor",
             enabled: false,
             available: false,
-            apiKey: existingManaged.apiKey,
+            apiKey: existingManaged.cursorAuthMode === "cli-login" ? undefined : existingManaged.apiKey,
+            cursorAuthMode: existingManaged.cursorAuthMode === "cli-login" ? "cli-login" : "api-key",
           },
         ],
         defaultAgentId: existingManaged.id === defaultAgentId ? "catty" : defaultAgentId,
@@ -115,6 +116,15 @@ export function buildManagedAgentState(
       || (agentKey === "codebuddy" && existingManaged && !isPathLikeCommand(existingManaged.command))
       ? true
       : managedAgents.some((agent) => agent.enabled) || managedAgents.every((agent) => agent.available === false),
+    ...(agentKey === "cursor" ? {
+      cursorAuthMode: existingManaged?.cursorAuthMode
+        ?? (pathInfo.authSource === "cli-login" ? "cli-login" : "api-key"),
+      ...(
+        (existingManaged?.cursorAuthMode ?? (pathInfo.authSource === "cli-login" ? "cli-login" : "api-key")) === "cli-login"
+          ? { apiKey: undefined }
+          : (existingManaged?.apiKey ? { apiKey: existingManaged.apiKey } : {})
+      ),
+    } : {}),
   };
 
   return {
